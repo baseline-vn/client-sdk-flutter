@@ -32,14 +32,12 @@ class LiveKitTheme {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ButtonStyle(
-            textStyle:
-                WidgetStateProperty.all<TextStyle>(GoogleFonts.montserrat(
+            textStyle: WidgetStateProperty.all<TextStyle>(GoogleFonts.montserrat(
               fontSize: 15,
             )),
-            padding: WidgetStateProperty.all<EdgeInsets>(
-                const EdgeInsets.symmetric(vertical: 20, horizontal: 25)),
-            shape: WidgetStateProperty.all<OutlinedBorder>(
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            padding: WidgetStateProperty.all<EdgeInsets>(const EdgeInsets.symmetric(vertical: 20, horizontal: 25)),
+            shape:
+                WidgetStateProperty.all<OutlinedBorder>(RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
             foregroundColor: WidgetStateProperty.all<Color>(Colors.white),
             // backgroundColor: WidgetStateProperty.all<Color>(accentColor),
             backgroundColor: WidgetStateProperty.resolveWith((states) {
@@ -68,7 +66,7 @@ class LiveKitTheme {
             return Colors.white.withValues(alpha: 0.3);
           }),
         ),
-        dialogTheme: DialogTheme(
+        dialogTheme: DialogThemeData(
           backgroundColor: cardColor,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),

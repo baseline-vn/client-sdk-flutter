@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
@@ -42,18 +43,40 @@ enum VideoRenderMode {
   platformView,
 }
 
+enum VideoViewFit {
+  contain,
+  cover,
+}
+
+extension VideoViewFitExt on VideoViewFit {
+  rtc.RTCVideoViewObjectFit toRTCType() {
+    if (this == VideoViewFit.cover) {
+      return rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover;
+    }
+    return rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitContain;
+  }
+}
+
 /// Widget that renders a [VideoTrack].
 class VideoTrackRenderer extends StatefulWidget {
   final VideoTrack track;
-  final rtc.RTCVideoViewObjectFit fit;
+  final VideoViewFit fit;
   final VideoViewMirrorMode mirrorMode;
   final VideoRenderMode renderMode;
+  final rtc.RTCVideoRenderer? cachedRenderer;
+  final bool autoDisposeRenderer;
+
+  /// wrap the video view in a Center widget (if [fit] is [VideoViewFit.contain])
+  final bool autoCenter;
 
   const VideoTrackRenderer(
     this.track, {
-    this.fit = rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+    this.fit = VideoViewFit.contain,
     this.mirrorMode = VideoViewMirrorMode.auto,
     this.renderMode = VideoRenderMode.texture,
+    this.autoDisposeRenderer = true,
+    this.cachedRenderer,
+    this.autoCenter = true,
     Key? key,
   }) : super(key: key);
 
@@ -65,16 +88,19 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
   rtc.VideoRenderer? _renderer;
   // for flutter web only.
   bool _rendererReadyForWeb = false;
+  double? _aspectRatio;
   EventsListener<TrackEvent>? _listener;
   // Used to compute visibility information
   late GlobalKey _internalKey;
 
   Future<rtc.VideoRenderer> _initializeRenderer() async {
-    if (widget.renderMode == VideoRenderMode.platformView) {
+    if (lkPlatformIs(PlatformType.iOS) && widget.renderMode == VideoRenderMode.platformView) {
       return Null as Future<rtc.VideoRenderer>;
     }
-    _renderer ??= rtc.RTCVideoRenderer();
-    await _renderer!.initialize();
+    if (_renderer == null) {
+      _renderer = rtc.RTCVideoRenderer();
+      await _renderer!.initialize();
+    }
     await _attach();
     return _renderer!;
   }
@@ -94,14 +120,16 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
       details.localPosition.dy / constraints.maxHeight,
     );
 
-    rtc.Helper.setFocusPoint(videoTrack, point);
-    rtc.Helper.setExposurePoint(videoTrack, point);
+    // Don't wait here as it will slow down the UI unnecessarily.
+    unawaited(rtc.Helper.setFocusPoint(videoTrack, point));
+    unawaited(rtc.Helper.setExposurePoint(videoTrack, point));
   }
 
   void disposeRenderer() {
     try {
+      _renderer?.onResize = null;
       _renderer?.srcObject = null;
-      _renderer?.dispose();
+      unawaited(_renderer?.dispose());
       _renderer = null;
     } catch (e) {
       logger.warning('Got error disposing renderer: $e');
@@ -111,20 +139,26 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
   @override
   void initState() {
     super.initState();
+    if (widget.cachedRenderer != null) {
+      _renderer = widget.cachedRenderer;
+    }
     _internalKey = widget.track.addViewKey();
     if (kIsWeb) {
-      () async {
+      unawaited(() async {
         await _initializeRenderer();
+        if (!mounted) return;
         setState(() => _rendererReadyForWeb = true);
-      }();
+      }());
     }
   }
 
   @override
   void dispose() {
     widget.track.removeViewKey(_internalKey);
-    _listener?.dispose();
-    disposeRenderer();
+    unawaited(_listener?.dispose());
+    if (widget.autoDisposeRenderer) {
+      disposeRenderer();
+    }
     super.dispose();
   }
 
@@ -141,6 +175,13 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
         // force recompute of mirror mode
         setState(() {});
       });
+    _renderer?.onResize = () {
+      if (mounted) {
+        setState(() {
+          _aspectRatio = (_renderer as rtc.RTCVideoRenderer?)?.videoValue.aspectRatio;
+        });
+      }
+    };
   }
 
   @override
@@ -149,13 +190,12 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
     if (widget.track != oldWidget.track) {
       oldWidget.track.removeViewKey(_internalKey);
       _internalKey = widget.track.addViewKey();
-      (() async {
+      unawaited(() async {
         await _attach();
-      })();
+      }());
     }
 
-    if ([BrowserType.safari, BrowserType.firefox].contains(lkBrowser()) &&
-        oldWidget.key != widget.key) {
+    if ([BrowserType.safari, BrowserType.firefox].contains(lkBrowser()) && oldWidget.key != widget.key) {
       _renderer?.srcObject = widget.track.mediaStream;
     }
   }
@@ -166,30 +206,27 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
           key: _internalKey,
           builder: (ctx) {
             // let it render before notifying build
-            WidgetsBindingCompatible.instance
-                ?.addPostFrameCallback((timeStamp) {
+            WidgetsBindingCompatible.instance?.addPostFrameCallback((timeStamp) {
               widget.track.onVideoViewBuild?.call(_internalKey);
             });
             return rtc.RTCVideoView(
               _renderer! as rtc.RTCVideoRenderer,
               mirror: _shouldMirror(),
               filterQuality: FilterQuality.medium,
-              objectFit: widget.fit,
+              objectFit: widget.fit.toRTCType(),
             );
           },
         );
 
   Widget _videoRendererView() {
-    if (lkPlatformIs(PlatformType.iOS) &&
-        [VideoRenderMode.auto, VideoRenderMode.platformView]
-            .contains(widget.renderMode)) {
+    if (lkPlatformIs(PlatformType.iOS) && widget.renderMode == VideoRenderMode.platformView) {
       return rtc.RTCVideoPlatFormView(
         mirror: _shouldMirror(),
-        objectFit: widget.fit,
-        onViewReady: (controller) {
+        objectFit: widget.fit.toRTCType(),
+        onViewReady: (controller) async {
           _renderer = controller;
           _renderer?.srcObject = widget.track.mediaStream;
-          _attach();
+          await _attach();
         },
       );
     }
@@ -197,7 +234,7 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
       _renderer! as rtc.RTCVideoRenderer,
       mirror: _shouldMirror(),
       filterQuality: FilterQuality.medium,
-      objectFit: widget.fit,
+      objectFit: widget.fit.toRTCType(),
     );
   }
 
@@ -205,14 +242,12 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
       future: _initializeRenderer(),
       builder: (context, snapshot) {
         if ((snapshot.hasData && _renderer != null) ||
-            [VideoRenderMode.auto, VideoRenderMode.platformView]
-                .contains(widget.renderMode)) {
+            (lkPlatformIs(PlatformType.iOS) && widget.renderMode == VideoRenderMode.platformView)) {
           return Builder(
             key: _internalKey,
             builder: (ctx) {
               // let it render before notifying build
-              WidgetsBindingCompatible.instance
-                  ?.addPostFrameCallback((timeStamp) {
+              WidgetsBindingCompatible.instance?.addPostFrameCallback((timeStamp) {
                 widget.track.onVideoViewBuild?.call(_internalKey);
               });
 
@@ -228,8 +263,7 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
                         setZoom(details.scale);
                       }
                     },
-                    onTapDown: (TapDownDetails details) =>
-                        onViewFinderTap(details, constraints),
+                    onTapDown: (TapDownDetails details) => onViewFinderTap(details, constraints),
                     child: _videoRendererView(),
                   );
                 },
@@ -243,8 +277,51 @@ class _VideoTrackRendererState extends State<VideoTrackRenderer> {
   // FutureBuilder will cause flickering for flutter web. so using
   // different rendering methods for web and native.
   @override
-  Widget build(BuildContext context) =>
-      kIsWeb ? _videoViewForWeb() : _videoViewForNative();
+  Widget build(BuildContext context) {
+    final child = kIsWeb ? _videoViewForWeb() : _videoViewForNative();
+
+    if (widget.fit == VideoViewFit.cover) {
+      return child;
+    }
+
+    final videoView = LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (!constraints.hasBoundedWidth && !constraints.hasBoundedHeight) {
+          return child;
+        }
+        if (_aspectRatio == null) {
+          return child;
+        }
+
+        bool fixHeight;
+        if (!constraints.hasBoundedWidth) {
+          fixHeight = true;
+        } else if (!constraints.hasBoundedHeight) {
+          fixHeight = false;
+        } else {
+          // both width and height are bound, figure out which to fix based on aspect ratios
+          final constraintsAspectRatio = constraints.maxWidth / constraints.maxHeight;
+          fixHeight = constraintsAspectRatio > _aspectRatio!;
+        }
+        final double width;
+        final double height;
+        if (fixHeight) {
+          height = constraints.maxHeight;
+          width = height * _aspectRatio!;
+        } else {
+          width = constraints.maxWidth;
+          height = width / _aspectRatio!;
+        }
+        return SizedBox(width: width, height: height, child: child);
+      },
+    );
+
+    if (widget.autoCenter) {
+      return Center(child: videoView);
+    } else {
+      return videoView;
+    }
+  }
 
   bool _shouldMirror() {
     // off for screen share

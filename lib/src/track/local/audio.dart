@@ -28,8 +28,7 @@ import '../audio_management.dart';
 import '../options.dart';
 import 'local.dart';
 
-class LocalAudioTrack extends LocalTrack
-    with AudioTrack, LocalAudioManagementMixin {
+class LocalAudioTrack extends LocalTrack with AudioTrack, LocalAudioManagementMixin {
   // Options used for this track
   @override
   covariant AudioCaptureOptions currentOptions;
@@ -47,7 +46,8 @@ class LocalAudioTrack extends LocalTrack
   }
 
   num? _currentBitrate;
-  get currentBitrate => _currentBitrate;
+  num? get currentBitrate => _currentBitrate;
+
   AudioSenderStats? prevStats;
 
   @override
@@ -60,9 +60,9 @@ class LocalAudioTrack extends LocalTrack
       final stats = await getSenderStats();
 
       if (stats != null && prevStats != null && sender != null) {
-        _currentBitrate = computeBitrateForSenderStats(stats, prevStats);
-        events.emit(AudioSenderStatsEvent(
-            stats: stats, currentBitrate: currentBitrate));
+        final bitrate = computeBitrateForSenderStats(stats, prevStats);
+        _currentBitrate = bitrate;
+        events.emit(AudioSenderStatsEvent(stats: stats, currentBitrate: bitrate));
       }
 
       prevStats = stats;
@@ -92,15 +92,13 @@ class LocalAudioTrack extends LocalTrack
         senderStats.packetsSent = getNumValFromReport(v.values, 'packetsSent');
         senderStats.packetsLost = getNumValFromReport(v.values, 'packetsLost');
         senderStats.bytesSent = getNumValFromReport(v.values, 'bytesSent');
-        senderStats.roundTripTime =
-            getNumValFromReport(v.values, 'roundTripTime');
+        senderStats.roundTripTime = getNumValFromReport(v.values, 'roundTripTime');
         senderStats.jitter = getNumValFromReport(v.values, 'jitter');
 
         final c = stats.firstWhereOrNull((element) => element.type == 'codec');
         if (c != null) {
           senderStats.mimeType = getStringValFromReport(c.values, 'mimeType');
-          senderStats.payloadType =
-              getNumValFromReport(c.values, 'payloadType');
+          senderStats.payloadType = getNumValFromReport(c.values, 'payloadType');
           senderStats.channels = getNumValFromReport(c.values, 'channels');
           senderStats.clockRate = getNumValFromReport(c.values, 'clockRate');
         }
@@ -118,30 +116,32 @@ class LocalAudioTrack extends LocalTrack
     TrackSource source,
     rtc.MediaStream stream,
     rtc.MediaStreamTrack track,
-    this.currentOptions, {
-    bool? enableVisualizer,
-  }) : super(
+    this.currentOptions,
+  ) : super(
           TrackType.AUDIO,
           source,
           stream,
           track,
-          enableVisualizer: enableVisualizer,
         );
 
   /// Creates a new audio track from the default audio input device.
   static Future<LocalAudioTrack> create([
     AudioCaptureOptions? options,
-    bool? enableVisualizer,
   ]) async {
     options ??= const AudioCaptureOptions();
     final stream = await LocalTrack.createStream(options);
 
-    return LocalAudioTrack(
+    final track = LocalAudioTrack(
       TrackSource.microphone,
       stream,
       stream.getAudioTracks().first,
       options,
-      enableVisualizer: enableVisualizer,
     );
+
+    if (options.processor != null) {
+      await track.setProcessor(options.processor);
+    }
+
+    return track;
   }
 }

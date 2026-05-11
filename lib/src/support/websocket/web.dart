@@ -25,9 +25,10 @@ import '../websocket.dart';
 // ignore: avoid_web_libraries_in_flutter
 
 Future<LiveKitWebSocketWeb> lkWebSocketConnect(
-  Uri uri, [
+  Uri uri, {
   WebSocketEventHandlers? options,
-]) =>
+  Map<String, String>? headers, // |headers| will be ignored on web
+}) =>
     LiveKitWebSocketWeb.connect(uri, options);
 
 class LiveKitWebSocketWeb extends LiveKitWebSocket {
@@ -39,15 +40,16 @@ class LiveKitWebSocketWeb extends LiveKitWebSocket {
   LiveKitWebSocketWeb._(
     this._ws, [
     this.options,
+    Map<String, String>? headers, // ignore: unused_element_parameter
   ]) {
     _ws.binaryType = 'arraybuffer';
-    _messageSubscription = _ws.onMessage.listen((_) {
+    _messageSubscription = _ws.onMessage.listen((event) {
       if (isDisposed) {
         logger.warning('$objectId already disposed, ignoring received data.');
         return;
       }
-      dynamic data =
-          _.data is ByteBuffer ? (_.data as ByteBuffer).asUint8List() : _.data;
+      final dynamic data =
+          event.data.instanceOfString('ArrayBuffer') ? (event.data as JSArrayBuffer).toDart.asUint8List() : event.data;
       options?.onData?.call(data);
     });
     _closeSubscription = _ws.onClose.listen((_) async {
@@ -64,7 +66,9 @@ class LiveKitWebSocketWeb extends LiveKitWebSocket {
   }
 
   @override
-  void send(List<int> data) => _ws.send(Uint8List.fromList(data).toJS);
+  void send(List<int> data) {
+    _ws.send(Uint8List.fromList(data).toJS);
+  }
 
   static Future<LiveKitWebSocketWeb> connect(
     Uri uri, [
@@ -72,10 +76,8 @@ class LiveKitWebSocketWeb extends LiveKitWebSocket {
   ]) async {
     final completer = Completer<LiveKitWebSocketWeb>();
     final ws = web.WebSocket(uri.toString());
-    ws.onOpen
-        .listen((_) => completer.complete(LiveKitWebSocketWeb._(ws, options)));
-    ws.onError.listen((e) =>
-        completer.completeError(WebSocketException('Failed to connect', e)));
+    ws.onOpen.listen((_) => completer.complete(LiveKitWebSocketWeb._(ws, options)));
+    ws.onError.listen((e) => completer.completeError(WebSocketException('Failed to connect', e)));
     return completer.future;
   }
 }

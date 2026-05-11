@@ -13,9 +13,11 @@
 // limitations under the License.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data' show Uint8List;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 
 import 'package:collection/collection.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -32,6 +34,7 @@ import 'options.dart';
 import 'support/platform.dart';
 import 'track/local/video.dart';
 import 'types/other.dart';
+import 'types/priority.dart';
 import 'types/video_dimensions.dart';
 import 'types/video_encoding.dart';
 import 'types/video_parameters.dart';
@@ -66,7 +69,7 @@ class Utils {
     Duration delay = const Duration(seconds: 1),
     RetryCondition? retryCondition,
   }) async {
-    List<Object> errors = [];
+    final List<Object> errors = [];
     while (tries-- > 0) {
       try {
         return await future(tries, errors);
@@ -109,7 +112,7 @@ class Utils {
 
         /// [MacOsDeviceInfo.osRelease] returns Darwin version instead of macOS version
         /// So call native code to get os version
-        String? osVersionString = await Native.osVersionString();
+        final String? osVersionString = await Native.osVersionString();
 
         return lk_models.ClientInfo(
           os: 'macOS',
@@ -163,6 +166,7 @@ class Utils {
     bool validate = false,
     bool forceSecure = false,
     String? sid,
+    lk_models.ReconnectReason? reconnectReason,
   }) async {
     final Uri uri = Uri.parse(uriString);
 
@@ -184,10 +188,11 @@ class Utils {
       scheme: validate ? httpScheme : wsScheme,
       pathSegments: pathSegments,
       queryParameters: <String, String>{
-        'access_token': token,
+        if (kIsWeb) 'access_token': token,
         'auto_subscribe': connectOptions.autoSubscribe ? '1' : '0',
         'adaptive_stream': roomOptions.adaptiveStream ? '1' : '0',
         if (reconnect) 'reconnect': '1',
+        if (reconnect && reconnectReason != null) 'reconnect_reason': reconnectReason.value.toString(),
         if (reconnect && sid != null) 'sid': sid,
         'protocol': connectOptions.protocolVersion.toStringValue(),
         'sdk': 'flutter',
@@ -197,11 +202,9 @@ class Utils {
         if (clientInfo != null) ...{
           if (clientInfo.hasOs()) 'os': clientInfo.os,
           if (clientInfo.hasOsVersion()) 'os_version': clientInfo.osVersion,
-          if (clientInfo.hasDeviceModel())
-            'device_model': clientInfo.deviceModel,
+          if (clientInfo.hasDeviceModel()) 'device_model': clientInfo.deviceModel,
           if (clientInfo.hasBrowser()) 'browser': clientInfo.browser,
-          if (clientInfo.hasBrowserVersion())
-            'browser_version': clientInfo.browserVersion,
+          if (clientInfo.hasBrowserVersion()) 'browser_version': clientInfo.browserVersion,
         },
       },
     );
@@ -216,8 +219,7 @@ class Utils {
     }
 
     final a = dimensions.aspect();
-    if ((a - VideoDimensionsHelpers.aspect169).abs() <
-        (a - VideoDimensionsHelpers.aspect43).abs()) {
+    if ((a - VideoDimensionsHelpers.aspect169).abs() < (a - VideoDimensionsHelpers.aspect43).abs()) {
       return VideoParametersPresets.all169;
     }
 
@@ -227,23 +229,18 @@ class Utils {
   static List<VideoParameters> _computeDefaultScreenShareSimulcastParams({
     required VideoParameters original,
   }) {
-    final layers = [
-      rtc.RTCRtpEncoding(scaleResolutionDownBy: 2, maxFramerate: 3)
-    ];
+    final layers = [rtc.RTCRtpEncoding(scaleResolutionDownBy: 2, maxFramerate: 3)];
     return layers.map((e) {
       final scale = e.scaleResolutionDownBy ?? 1;
       final fps = e.maxFramerate ?? 3;
 
       return VideoParameters(
-        dimensions: VideoDimensions((original.dimensions.width / scale).floor(),
-            (original.dimensions.height / scale).floor()),
+        dimensions:
+            VideoDimensions((original.dimensions.width / scale).floor(), (original.dimensions.height / scale).floor()),
         encoding: VideoEncoding(
           maxBitrate: math.max(
             150 * 1000,
-            (original.encoding!.maxBitrate /
-                    (math.pow(scale, 2) *
-                        (original.encoding!.maxFramerate / fps)))
-                .floor(),
+            (original.encoding!.maxBitrate / (math.pow(scale, 2) * (original.encoding!.maxFramerate / fps))).floor(),
           ),
           maxFramerate: fps,
         ),
@@ -259,8 +256,7 @@ class Utils {
       return _computeDefaultScreenShareSimulcastParams(original: original);
     }
     final a = original.dimensions.aspect();
-    if ((a - VideoDimensionsHelpers.aspect169).abs() <
-        (a - VideoDimensionsHelpers.aspect43).abs()) {
+    if ((a - VideoDimensionsHelpers.aspect169).abs() < (a - VideoDimensionsHelpers.aspect43).abs()) {
       return VideoParametersPresets.defaultSimulcast169;
     }
 
@@ -292,12 +288,10 @@ class Utils {
     if (codec != null) {
       switch (codec) {
         case 'av1':
-          result =
-              result.copyWith(maxBitrate: (result.maxBitrate * 0.7).toInt());
+          result = result.copyWith(maxBitrate: (result.maxBitrate * 0.7).toInt());
           break;
         case 'vp9':
-          result =
-              result.copyWith(maxBitrate: (result.maxBitrate * 0.85).toInt());
+          result = result.copyWith(maxBitrate: (result.maxBitrate * 0.85).toInt());
           break;
         default:
           break;
@@ -312,7 +306,7 @@ class Utils {
     VideoDimensions dimensions, {
     required List<VideoParameters> presets,
   }) {
-    List<rtc.RTCRtpEncoding> result = [];
+    final List<rtc.RTCRtpEncoding> result = [];
     presets.forEachIndexed((i, e) {
       if (i >= videoRids.length) {
         return;
@@ -334,7 +328,7 @@ class Utils {
     if (!kIsWeb && lkPlatformIsTest()) {
       return 'wifi';
     }
-    var connectivityResult = await (Connectivity().checkConnectivity());
+    final connectivityResult = await (Connectivity().checkConnectivity());
     // wifi, wired, cellular, vpn, empty if not known
     String networkType = 'empty';
     if (connectivityResult.contains(ConnectivityResult.none)) {
@@ -396,12 +390,9 @@ class Utils {
       videoEncoding = options.screenShareEncoding;
     }
 
-    var scalabilityMode = options.scalabilityMode;
+    final scalabilityMode = options.scalabilityMode;
 
-    if ((videoEncoding == null &&
-            !options.simulcast &&
-            scalabilityMode == null) ||
-        dimensions == null) {
+    if ((videoEncoding == null && !options.simulcast && scalabilityMode == null) || dimensions == null) {
       // don't set encoding when we are not simulcasting and user isn't restricting
       // encoding parameters
       return [rtc.RTCRtpEncoding()];
@@ -431,11 +422,9 @@ class Utils {
 
     if (scalabilityMode != null && isSVCCodec(options.videoCodec)) {
       logger.info('using svc with scalabilityMode ${scalabilityMode}');
-      List<rtc.RTCRtpEncoding> encodings = [];
+      final List<rtc.RTCRtpEncoding> encodings = [];
       if (lkPlatformIs(PlatformType.web) &&
-          (lkBrowser() == BrowserType.safari ||
-              lkBrowser() == BrowserType.chrome &&
-                  lkBrowserVersion().major < 113)) {
+          (lkBrowser() == BrowserType.safari || lkBrowser() == BrowserType.chrome && lkBrowserVersion().major < 113)) {
         final sm = ScalabilityMode(scalabilityMode);
         for (var i = 0; i < sm.spatial; i += 1) {
           // in legacy SVC, scaleResolutionDownBy cannot be set
@@ -443,6 +432,8 @@ class Utils {
             rid: videoRids[2 - i],
             maxBitrate: videoEncoding.maxBitrate ~/ math.pow(3, i),
             maxFramerate: original.encoding!.maxFramerate,
+            priority: videoEncoding.bitratePriority?.toRtcpPriorityType() ?? rtc.RTCPriorityType.low,
+            networkPriority: videoEncoding.networkPriority?.toRtcpPriorityType(),
           ));
         }
       } else {
@@ -457,14 +448,11 @@ class Utils {
     }
 
     // compute simulcast encodings
-    final userParams = isScreenShare
-        ? options.screenShareSimulcastLayers
-        : options.videoSimulcastLayers;
+    final userParams = isScreenShare ? options.screenShareSimulcastLayers : options.videoSimulcastLayers;
 
     final params = (userParams.isNotEmpty
             ? userParams
-            : _computeDefaultSimulcastParams(
-                isScreenShare: isScreenShare, original: original))
+            : _computeDefaultSimulcastParams(isScreenShare: isScreenShare, original: original))
         .sorted();
 
     final VideoParameters lowPreset = params.first;
@@ -498,7 +486,7 @@ class Utils {
       videoEncoding: backupOpts.encoding,
       simulcast: backupOpts.simulcast,
     );
-    var encodings = computeVideoEncodings(
+    final encodings = computeVideoEncodings(
       isScreenShare: track.source == TrackSource.screenShareVideo,
       dimensions: track.currentOptions.params.dimensions,
       options: opts,
@@ -530,8 +518,7 @@ class Utils {
       final maxBitrate = encodings[0].maxBitrate ?? 0;
       for (var i = 0; i < sm.spatial; i++) {
         layers.add(lk_models.VideoLayer(
-          quality: lk_models.VideoQuality.valueOf(
-              lk_models.VideoQuality.HIGH.value - i),
+          quality: lk_models.VideoQuality.valueOf(lk_models.VideoQuality.HIGH.value - i),
           width: (dimensions.width / math.pow(2, i)).floor(),
           height: (dimensions.height / math.pow(2, i)).floor(),
           bitrate: (maxBitrate / math.pow(3, i)).ceil(),
@@ -586,6 +573,8 @@ const refreshSubscribedCodecAfterNewCodec = 5000;
 
 bool isSVCCodec(String codec) => ['vp9', 'av1'].contains(codec.toLowerCase());
 
+bool isAV1Codec(String codec) => codec.toLowerCase() == 'av1';
+
 class ScalabilityMode {
   late num spatial;
 
@@ -596,12 +585,12 @@ class ScalabilityMode {
   /// 'h' | '_KEY' | '_KEY_SHIFT';
 
   ScalabilityMode(String scalabilityMode) {
-    RegExp exp = RegExp(r'^L(\d)T(\d)(h|_KEY|_KEY_SHIFT){0,1}');
-    Iterable<RegExpMatch> matches = exp.allMatches(scalabilityMode);
+    final RegExp exp = RegExp(r'^L(\d)T(\d)(h|_KEY|_KEY_SHIFT){0,1}');
+    final Iterable<RegExpMatch> matches = exp.allMatches(scalabilityMode);
     if (matches.isEmpty) {
       throw Exception('invalid scalability mode');
     }
-    var results = matches.first.groups([1, 2, 3]);
+    final results = matches.first.groups([1, 2, 3]);
     spatial = int.tryParse(results[0]!) as num;
     temporal = int.tryParse(results[1]!) as num;
     if (results.length > 2) {
@@ -626,7 +615,8 @@ String mimeTypeToVideoCodecString(String mimeType) {
   }
   final codec = mimeType.split('/')[1].toLowerCase();
   if (!videoCodecs.contains(codec)) {
-    throw Exception('Video codec not supported: $codec');
+    logger.warning('Video codec not supported: $codec');
+    return '';
   }
   return codec;
 }
@@ -694,6 +684,53 @@ Map mapDiff(Map left, Map right) {
     rightCopy.remove(leftKey);
   });
 
-  return {...diff, ...rightCopy}
-    ..removeWhere((key, value) => (value is Map && value.isEmpty));
+  return {...diff, ...rightCopy}..removeWhere((key, value) => (value is Map && value.isEmpty));
+}
+
+int compareVersions(String v1, String v2) {
+  final parts1 = v1.split('.');
+  final parts2 = v2.split('.');
+  final k = math.min(parts1.length, parts2.length);
+  for (var i = 0; i < k; ++i) {
+    final p1 = int.parse(parts1[i]);
+    final p2 = int.parse(parts2[i]);
+    if (p1 > p2) return 1;
+    if (p1 < p2) return -1;
+    if (i == k - 1 && p1 == p2) return 0;
+  }
+  if (v1 == '' && v2 != '') {
+    return -1;
+  } else if (v2 == '') {
+    return 1;
+  }
+  return parts1.length == parts2.length
+      ? 0
+      : parts1.length < parts2.length
+          ? -1
+          : 1;
+}
+
+List<Uint8List> splitUtf8(String s, int n) {
+  if (n < 4) {
+    throw Exception('n must be at least 4 due to utf8 encoding rules');
+  }
+  // adapted from https://stackoverflow.com/a/6043797
+  final List<Uint8List> result = [];
+  var encoded = utf8.encode(s);
+  while (encoded.length > n) {
+    var k = n;
+    while (k > 0) {
+      final byte = encoded[k];
+      if ((byte & 0xc0) != 0x80) {
+        break;
+      }
+      k--;
+    }
+    result.add(encoded.sublist(0, k));
+    encoded = encoded.sublist(k);
+  }
+  if (encoded.isNotEmpty) {
+    result.add(encoded);
+  }
+  return result;
 }

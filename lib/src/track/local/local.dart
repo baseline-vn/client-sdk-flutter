@@ -14,23 +14,24 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:meta/meta.dart';
 
+import '../../audio/audio_frame_capture.dart';
 import '../../events.dart';
 import '../../exceptions.dart';
 import '../../extensions.dart';
 import '../../internal/events.dart';
 import '../../logger.dart';
 import '../../participant/remote.dart';
-import '../../support/native.dart';
 import '../../support/platform.dart';
 import '../../types/other.dart';
 import '../options.dart';
+import '../processor.dart';
+import '../processor_native.dart' if (dart.library.js_interop) '../processor_web.dart';
 import '../remote/audio.dart';
 import '../remote/video.dart';
 import '../track.dart';
@@ -60,50 +61,93 @@ mixin VideoTrack on Track {
 
 /// Used to group [LocalAudioTrack] and [RemoteAudioTrack].
 mixin AudioTrack on Track {
-  EventChannel? _eventChannel;
-  StreamSubscription? _streamSubscription;
+  final Map<AudioRendererOptions, _AudioCaptureGroup> _captureGroups = {};
+
+  /// Register a callback to receive raw PCM audio frames from this track.
+  ///
+  /// Multiple renderers with different [options] each get their own capture
+  /// pipeline. Renderers sharing the same options share a single capture.
+  ///
+  /// Returns a function that, when called, removes this renderer.
+  /// When the last renderer for a given options config is removed, that
+  /// capture stops automatically.
+  CancelListenFunc addAudioRenderer({
+    required AudioFrameCallback onFrame,
+    AudioRendererOptions options = const AudioRendererOptions(),
+  }) {
+    final group = _captureGroups.putIfAbsent(
+      options,
+      () => _AudioCaptureGroup(track: mediaStreamTrack, options: options),
+    );
+    group.renderers.add(onFrame);
+
+    return () async {
+      group.renderers.remove(onFrame);
+      if (group.renderers.isEmpty) {
+        _captureGroups.remove(options);
+        await group.stop();
+      }
+    };
+  }
 
   @override
   Future<void> onStarted() async {
-    if (enableVisualizer == true) {
-      await startVisualizer();
-    }
+    logger.fine('AudioTrack.onStarted()');
   }
 
   @override
   Future<void> onStopped() async {
-    if (enableVisualizer == true) {
-      await stopVisualizer();
+    logger.fine('AudioTrack.onStopped()');
+    for (final group in _captureGroups.values) {
+      await group.stop();
     }
+    _captureGroups.clear();
+  }
+}
+
+class _AudioCaptureGroup {
+  final List<AudioFrameCallback> renderers = [];
+  late final Future<void> _startFuture;
+  AudioFrameCapture? _capture;
+  StreamSubscription? _subscription;
+
+  _AudioCaptureGroup({
+    required rtc.MediaStreamTrack track,
+    required AudioRendererOptions options,
+  }) {
+    _startFuture = _start(track, options);
   }
 
-  Future<void> startVisualizer() async {
-    if (_eventChannel != null) {
+  Future<void> _start(rtc.MediaStreamTrack track, AudioRendererOptions options) async {
+    final capture = createAudioFrameCapture();
+    _capture = capture;
+
+    final result = await capture.start(
+      track: track,
+      rendererId: Track.uuid.v4(),
+      sampleRate: options.sampleRate,
+      channels: options.channels,
+      format: options.format,
+    );
+
+    if (!result) {
+      logger.warning('Failed to start audio capture for renderer');
       return;
     }
 
-    await Native.startVisualizer(mediaStreamTrack.id!);
-
-    _eventChannel = EventChannel(
-        'io.livekit.audio.visualizer/eventChannel-${mediaStreamTrack.id}');
-    _streamSubscription =
-        _eventChannel?.receiveBroadcastStream().listen((event) {
-      //logger.fine('[$objectId] visualizer event(${event})');
-      events.emit(AudioVisualizerEvent(
-        track: this,
-        event: event,
-      ));
+    _subscription = capture.frameStream.listen((frame) {
+      for (final renderer in List.of(renderers)) {
+        renderer(frame);
+      }
     });
   }
 
-  Future<void> stopVisualizer() async {
-    if (_eventChannel == null) {
-      return;
-    }
-    await Native.stopVisualizer(mediaStreamTrack.id!);
-    await _streamSubscription?.cancel();
-    _streamSubscription = null;
-    _eventChannel = null;
+  Future<void> stop() async {
+    await _startFuture;
+    await _subscription?.cancel();
+    _subscription = null;
+    await _capture?.stop();
+    _capture = null;
   }
 }
 
@@ -119,18 +163,16 @@ abstract class LocalTrack extends Track {
 
   bool _stopped = false;
 
-  LocalTrack(
-    TrackType kind,
-    TrackSource source,
-    rtc.MediaStream mediaStream,
-    rtc.MediaStreamTrack mediaStreamTrack, {
-    bool? enableVisualizer,
-  }) : super(
+  TrackProcessor? _processor;
+
+  TrackProcessor? get processor => _processor;
+
+  LocalTrack(TrackType kind, TrackSource source, rtc.MediaStream mediaStream, rtc.MediaStreamTrack mediaStreamTrack)
+      : super(
           kind,
           source,
           mediaStream,
           mediaStreamTrack,
-          enableVisualizer: enableVisualizer,
         ) {
     mediaStreamTrack.onEnded = () {
       logger.fine('MediaStreamTrack.onEnded()');
@@ -182,6 +224,13 @@ abstract class LocalTrack extends Track {
         logger.severe('MediaStreamTrack.dispose() did throw $error');
       }
       _stopped = true;
+      try {
+        if (_processor != null) {
+          await stopProcessor();
+        }
+      } catch (error) {
+        logger.severe('LocalTrack.stopProcessor did throw: $error');
+      }
     }
     return didStop;
   }
@@ -191,15 +240,13 @@ abstract class LocalTrack extends Track {
   static Future<rtc.MediaStream> createStream(
     LocalTrackOptions options,
   ) async {
-    var constraints = <String, dynamic>{
+    final constraints = <String, dynamic>{
       'audio': options is AudioCaptureOptions
           ? options.toMediaConstraintsMap()
           : options is ScreenShareCaptureOptions
               ? (options).captureScreenAudio
               : false,
-      'video': options is VideoCaptureOptions
-          ? options.toMediaConstraintsMap()
-          : false,
+      'video': options is VideoCaptureOptions ? options.toMediaConstraintsMap() : false,
     };
 
     final rtc.MediaStream stream;
@@ -214,8 +261,7 @@ abstract class LocalTrack extends Track {
 
         // Remove resolution settings to fix low-resolution screen share on Safari 17.
         // related bug: https://bugs.webkit.org/show_bug.cgi?id=263015
-        if (lkBrowser() == BrowserType.safari &&
-            lkBrowserVersion().major == 17) {
+        if (lkBrowser() == BrowserType.safari && lkBrowserVersion().major == 17) {
           constraints['video'] = true;
         }
       }
@@ -228,8 +274,7 @@ abstract class LocalTrack extends Track {
     // Check if the stream looks good
     if ((options is VideoCaptureOptions && stream.getVideoTracks().isEmpty) ||
         (options is AudioCaptureOptions && stream.getAudioTracks().isEmpty)) {
-      throw TrackCreateException(
-          'Failed to create stream, at least 1 video or audio track should exist');
+      throw TrackCreateException('Failed to create stream, at least 1 video or audio track should exist');
     }
     return stream;
   }
@@ -253,11 +298,15 @@ abstract class LocalTrack extends Track {
     final newStream = await LocalTrack.createStream(currentOptions);
     final newTrack = newStream.getTracks().first;
 
+    final processor = _processor;
+
+    await stopProcessor();
+
     // replace track on sender
     try {
       await sender?.replaceTrack(newTrack);
       if (this is LocalVideoTrack) {
-        var videoTrack = this as LocalVideoTrack;
+        final videoTrack = this as LocalVideoTrack;
         await videoTrack.replaceTrackForMultiCodecSimulcast(newTrack);
       }
     } catch (error) {
@@ -267,6 +316,10 @@ abstract class LocalTrack extends Track {
     // set new stream & track to this object
     updateMediaStreamAndTrack(newStream, newTrack);
 
+    if (processor != null) {
+      await setProcessor(processor);
+    }
+
     // mark as started
     await start();
 
@@ -275,6 +328,53 @@ abstract class LocalTrack extends Track {
       track: this,
       options: currentOptions,
     ));
+  }
+
+  Future<void> setProcessor(TrackProcessor? processor) async {
+    if (processor == null) {
+      return;
+    }
+
+    if (_processor != null) {
+      await stopProcessor();
+    }
+
+    _processor = processor;
+
+    final processorOptions = kind == TrackType.VIDEO
+        ? VideoProcessorOptions(track: mediaStreamTrack)
+        : AudioProcessorOptions(track: mediaStreamTrack);
+
+    await _processor!.init(processorOptions);
+
+    if (_processor?.processedTrack != null) {
+      setProcessedTrack(processor.processedTrack!);
+    }
+
+    logger.fine('processor initialized');
+
+    events.emit(TrackProcessorUpdateEvent(track: this, processor: _processor));
+  }
+
+  @internal
+  Future<void> stopProcessor({bool keepElement = false}) async {
+    if (_processor == null) return;
+
+    logger.fine('stopping processor');
+    await _processor?.destroy();
+    _processor = null;
+
+    if (!keepElement) {
+      // processorElement?.remove();
+      // processorElement = null;
+    }
+
+    // apply original track constraints in case the processor changed them
+    //await this._mediaStreamTrack.applyConstraints(this._constraints);
+    // force re-setting of the mediaStreamTrack on the sender
+    //await this.setMediaStreamTrack(this._mediaStreamTrack, true);
+
+    events.emit(TrackProcessorUpdateEvent(track: this));
   }
 
   @internal

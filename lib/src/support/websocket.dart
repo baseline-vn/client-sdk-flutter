@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import '../support/disposable.dart';
-import 'websocket/io.dart' if (dart.library.html) 'websocket/web.dart';
+import 'websocket/io.dart' if (dart.library.js_interop) 'websocket/web.dart';
 
 class WebSocketException implements Exception {
   final String message;
@@ -37,13 +37,19 @@ class WebSocketEventHandlers {
   });
 }
 
-typedef WebSocketConnector = Future<LiveKitWebSocket> Function(Uri uri,
-    [WebSocketEventHandlers? options]);
+typedef WebSocketConnector = Future<LiveKitWebSocket> Function(
+  Uri uri, {
+  WebSocketEventHandlers? options,
+  Map<String, String>? headers,
+});
 
 abstract class LiveKitWebSocket extends Disposable {
   void send(List<int> data);
 
-  static Future<LiveKitWebSocket> connect(Uri uri,
-          [WebSocketEventHandlers? options]) =>
-      lkWebSocketConnect(uri, options);
+  static Future<LiveKitWebSocket> connect(
+    Uri uri, {
+    WebSocketEventHandlers? options,
+    Map<String, String>? headers,
+  }) =>
+      lkWebSocketConnect(uri, options: options, headers: headers);
 }

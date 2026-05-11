@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
@@ -76,19 +75,15 @@ class BaseKeyProvider implements KeyProvider {
     int? keyRingSize,
     bool? discardFrameWhenCryptorNotReady,
   }) async {
-    rtc.KeyProviderOptions options = rtc.KeyProviderOptions(
+    final rtc.KeyProviderOptions options = rtc.KeyProviderOptions(
         sharedKey: sharedKey,
-        ratchetSalt:
-            Uint8List.fromList((ratchetSalt ?? defaultRatchetSalt).codeUnits),
+        ratchetSalt: Uint8List.fromList((ratchetSalt ?? defaultRatchetSalt).codeUnits),
         ratchetWindowSize: ratchetWindowSize ?? defaultRatchetWindowSize,
-        uncryptedMagicBytes: Uint8List.fromList(
-            (uncryptedMagicBytes ?? defaultMagicBytes).codeUnits),
+        uncryptedMagicBytes: Uint8List.fromList((uncryptedMagicBytes ?? defaultMagicBytes).codeUnits),
         failureTolerance: failureTolerance ?? defaultFailureTolerance,
         keyRingSize: keyRingSize ?? defaultKeyRingSize,
-        discardFrameWhenCryptorNotReady:
-            defaultDiscardFrameWhenCryptorNotReady);
-    final keyProvider =
-        await rtc.frameCryptorFactory.createDefaultKeyProvider(options);
+        discardFrameWhenCryptorNotReady: defaultDiscardFrameWhenCryptorNotReady);
+    final keyProvider = await rtc.frameCryptorFactory.createDefaultKeyProvider(options);
     return BaseKeyProvider(keyProvider, options);
   }
 
@@ -117,17 +112,14 @@ class BaseKeyProvider implements KeyProvider {
 
   @override
   Future<Uint8List> ratchetKey(String participantId, int? keyIndex) =>
-      _keyProvider.ratchetKey(
-          participantId: participantId, index: keyIndex ?? 0);
+      _keyProvider.ratchetKey(participantId: participantId, index: keyIndex ?? 0);
 
   @override
   Future<Uint8List> exportKey(String participantId, int? keyIndex) =>
-      _keyProvider.exportKey(
-          participantId: participantId, index: keyIndex ?? 0);
+      _keyProvider.exportKey(participantId: participantId, index: keyIndex ?? 0);
 
   @override
-  Future<void> setKey(String key,
-      {String? participantId, int? keyIndex}) async {
+  Future<void> setKey(String key, {String? participantId, int? keyIndex}) async {
     if (options.sharedKey) {
       return setSharedKey(key, keyIndex: keyIndex);
     }
@@ -140,18 +132,15 @@ class BaseKeyProvider implements KeyProvider {
   }
 
   @override
-  Future<void> setRawKey(Uint8List key,
-      {String? participantId, int? keyIndex}) async {
-    return setKey(String.fromCharCodes(key),
-        participantId: participantId, keyIndex: keyIndex);
+  Future<void> setRawKey(Uint8List key, {String? participantId, int? keyIndex}) async {
+    return setKey(String.fromCharCodes(key), participantId: participantId, keyIndex: keyIndex);
   }
 
   Future<void> _setKey(KeyInfo keyInfo) async {
     if (!_keys.containsKey(keyInfo.participantId)) {
       _keys[keyInfo.participantId] = {};
     }
-    logger.info(
-        '_setKey for ${keyInfo.participantId}, idx: ${keyInfo.keyIndex}, key: ${base64Encode(keyInfo.key)}');
+    logger.info('_setKey for ${keyInfo.participantId}, idx: ${keyInfo.keyIndex}');
     _keys[keyInfo.participantId]![keyInfo.keyIndex] = keyInfo.key;
     _latestSetIndex[keyInfo.participantId] = keyInfo.keyIndex;
     await _keyProvider.setKey(

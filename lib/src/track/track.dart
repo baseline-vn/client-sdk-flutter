@@ -14,6 +14,8 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
@@ -30,8 +32,7 @@ import '../types/other.dart';
 /// Wrapper around a MediaStreamTrack with additional metadata.
 /// Base for [AudioTrack] and [VideoTrack],
 /// can not be instantiated directly.
-abstract class Track extends DisposableChangeNotifier
-    with EventsEmittable<TrackEvent> {
+abstract class Track extends DisposableChangeNotifier with EventsEmittable<TrackEvent> {
   static const uuid = Uuid();
   final TrackType kind;
   final TrackSource source;
@@ -43,6 +44,8 @@ abstract class Track extends DisposableChangeNotifier
   // read only
   rtc.MediaStreamTrack get mediaStreamTrack => _mediaStreamTrack;
   rtc.MediaStreamTrack _mediaStreamTrack;
+
+  rtc.MediaStreamTrack? _originalTrack;
 
   String? sid;
   rtc.RTCRtpTransceiver? transceiver;
@@ -59,10 +62,7 @@ abstract class Track extends DisposableChangeNotifier
 
   rtc.RTCRtpReceiver? receiver;
 
-  final bool? enableVisualizer;
-
-  Track(this.kind, this.source, this._mediaStream, this._mediaStreamTrack,
-      {this.receiver, this.enableVisualizer}) {
+  Track(this.kind, this.source, this._mediaStream, this._mediaStreamTrack, {this.receiver}) {
     // Any event emitted will trigger ChangeNotifier
     events.listen((event) {
       logger.finer('[TrackEvent] $event, will notifyListeners()');
@@ -133,6 +133,15 @@ abstract class Track extends DisposableChangeNotifier
 
     logger.fine('$objectId.stop()');
 
+    if (!kIsWeb) {
+      await mediaStreamTrack.stop();
+    }
+
+    if (_originalTrack != null) {
+      await _originalTrack?.stop();
+      _originalTrack = null;
+    }
+
     _active = false;
     return true;
   }
@@ -143,22 +152,19 @@ abstract class Track extends DisposableChangeNotifier
       if (_active) {
         mediaStreamTrack.enabled = true;
       }
-    } catch (_) {
-      logger.warning(
-          '[$objectId] set rtc.mediaStreamTrack.enabled did throw ${_}');
+    } catch (e) {
+      logger.warning('[$objectId] set rtc.mediaStreamTrack.enabled did throw $e');
     }
   }
 
   Future<void> disable() async {
-    logger
-        .fine('$objectId.disable() disabling ${mediaStreamTrack.objectId}...');
+    logger.fine('$objectId.disable() disabling ${mediaStreamTrack.objectId}...');
     try {
-      if (_active || !_muted) {
+      if (_active) {
         mediaStreamTrack.enabled = false;
       }
-    } catch (_) {
-      logger.warning(
-          '[$objectId] set rtc.mediaStreamTrack.enabled did throw ${_}');
+    } catch (e) {
+      logger.warning('[$objectId] set rtc.mediaStreamTrack.enabled did throw $e');
     }
   }
 
@@ -175,8 +181,7 @@ abstract class Track extends DisposableChangeNotifier
 
   @internal
   void startMonitor() {
-    _monitorTimer ??= Timer.periodic(
-        const Duration(milliseconds: monitorFrequency), (_) async {
+    _monitorTimer ??= Timer.periodic(const Duration(milliseconds: monitorFrequency), (_) async {
       if (!await monitorStats()) {
         stopMonitor();
       }
@@ -207,13 +212,18 @@ abstract class Track extends DisposableChangeNotifier
   }
 
   @internal
-  void updateMediaStreamAndTrack(
-      rtc.MediaStream stream, rtc.MediaStreamTrack track) {
+  void updateMediaStreamAndTrack(rtc.MediaStream stream, rtc.MediaStreamTrack track) {
     _mediaStream = stream;
     _mediaStreamTrack = track;
     events.emit(TrackStreamUpdatedEvent(
       track: this,
       stream: stream,
     ));
+  }
+
+  @internal
+  void setProcessedTrack(rtc.MediaStreamTrack track) {
+    _originalTrack = _mediaStreamTrack;
+    _mediaStreamTrack = track;
   }
 }

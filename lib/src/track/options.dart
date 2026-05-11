@@ -19,6 +19,8 @@ import '../support/platform.dart';
 import '../track/local/audio.dart';
 import '../track/local/video.dart';
 import '../types/video_parameters.dart';
+import 'processor.dart';
+import 'processor_native.dart' if (dart.library.js_interop) 'processor_web.dart';
 
 /// A type that represents front or back of the camera.
 enum CameraPosition {
@@ -60,10 +62,12 @@ class CameraCaptureOptions extends VideoCaptureOptions {
     double? maxFrameRate,
     VideoParameters params = VideoParametersPresets.h720_169,
     this.stopCameraCaptureOnMute = true,
+    TrackProcessor<VideoProcessorOptions>? processor,
   }) : super(
           params: params,
           deviceId: deviceId,
           maxFrameRate: maxFrameRate,
+          processor: processor,
         );
 
   CameraCaptureOptions.from({required VideoCaptureOptions captureOptions})
@@ -75,19 +79,22 @@ class CameraCaptureOptions extends VideoCaptureOptions {
           params: captureOptions.params,
           deviceId: captureOptions.deviceId,
           maxFrameRate: captureOptions.maxFrameRate,
+          processor: captureOptions.processor,
         );
 
   @override
   Map<String, dynamic> toMediaConstraintsMap() {
-    var constraints = <String, dynamic>{
+    final constraints = <String, dynamic>{
       ...super.toMediaConstraintsMap(),
-      if (deviceId == null)
-        'facingMode':
-            cameraPosition == CameraPosition.front ? 'user' : 'environment'
+      if (deviceId == null) 'facingMode': cameraPosition == CameraPosition.front ? 'user' : 'environment'
     };
-    if (deviceId != null) {
+    if (deviceId != null && deviceId!.isNotEmpty) {
       if (kIsWeb) {
-        constraints['deviceId'] = deviceId;
+        if (isChrome129OrLater()) {
+          constraints['deviceId'] = {'exact': deviceId};
+        } else {
+          constraints['deviceId'] = {'ideal': deviceId};
+        }
       } else {
         constraints['optional'] = [
           {'sourceId': deviceId}
@@ -102,19 +109,24 @@ class CameraCaptureOptions extends VideoCaptureOptions {
 
   // Returns new options with updated properties
   CameraCaptureOptions copyWith({
-    VideoParameters? params,
     CameraPosition? cameraPosition,
+    CameraFocusMode? focusMode,
+    CameraExposureMode? exposureMode,
     String? deviceId,
     double? maxFrameRate,
+    VideoParameters? params,
     bool? stopCameraCaptureOnMute,
+    TrackProcessor<VideoProcessorOptions>? processor,
   }) =>
       CameraCaptureOptions(
-        params: params ?? this.params,
         cameraPosition: cameraPosition ?? this.cameraPosition,
+        focusMode: focusMode ?? this.focusMode,
+        exposureMode: exposureMode ?? this.exposureMode,
         deviceId: deviceId ?? this.deviceId,
         maxFrameRate: maxFrameRate ?? this.maxFrameRate,
-        stopCameraCaptureOnMute:
-            stopCameraCaptureOnMute ?? this.stopCameraCaptureOnMute,
+        params: params ?? this.params,
+        stopCameraCaptureOnMute: stopCameraCaptureOnMute ?? this.stopCameraCaptureOnMute,
+        processor: processor ?? this.processor,
       );
 }
 
@@ -162,8 +174,7 @@ class ScreenShareCaptureOptions extends VideoCaptureOptions {
     String? selfBrowserSurface,
   }) =>
       ScreenShareCaptureOptions(
-        useiOSBroadcastExtension:
-            useiOSBroadcastExtension ?? this.useiOSBroadcastExtension,
+        useiOSBroadcastExtension: useiOSBroadcastExtension ?? this.useiOSBroadcastExtension,
         captureScreenAudio: captureScreenAudio ?? this.captureScreenAudio,
         params: params ?? this.params,
         sourceId: sourceId ?? deviceId,
@@ -174,9 +185,9 @@ class ScreenShareCaptureOptions extends VideoCaptureOptions {
 
   @override
   Map<String, dynamic> toMediaConstraintsMap() {
-    var constraints = super.toMediaConstraintsMap();
+    final constraints = super.toMediaConstraintsMap();
     if (useiOSBroadcastExtension && lkPlatformIs(PlatformType.iOS)) {
-      constraints['deviceId'] = 'broadcast';
+      constraints['deviceId'] = 'broadcast-manual';
     }
     if (lkPlatformIsDesktop()) {
       if (deviceId != null) {
@@ -205,38 +216,41 @@ abstract class VideoCaptureOptions extends LocalTrackOptions {
 
   /// The deviceId of the capture device to use.
   /// Available deviceIds can be obtained through `flutter_webrtc`:
-  /// <pre>
+  /// ```dart
   /// import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
   ///
   /// List<MediaDeviceInfo> devices = await rtc.navigator.mediaDevices.enumerateDevices();
   /// // or
   /// List<DesktopCapturerSource> desktopSources = await rtc.desktopCapturer.getSources(types: [rtc.SourceType.Screen, rtc.SourceType.Window]);
-  /// </pre>
+  /// ```
   final String? deviceId;
 
   // Limit the maximum frameRate of the capture device.
   final double? maxFrameRate;
 
+  /// A processor to apply to the video track.
+  final TrackProcessor<VideoProcessorOptions>? processor;
+
   const VideoCaptureOptions({
     this.params = VideoParametersPresets.h540_169,
     this.deviceId,
     this.maxFrameRate,
+    this.processor,
   });
 
   @override
-  Map<String, dynamic> toMediaConstraintsMap() =>
-      params.toMediaConstraintsMap();
+  Map<String, dynamic> toMediaConstraintsMap() => params.toMediaConstraintsMap();
 }
 
 /// Options used when creating a [LocalAudioTrack].
 class AudioCaptureOptions extends LocalTrackOptions {
   /// The deviceId of the capture device to use.
   /// Available deviceIds can be obtained through `flutter_webrtc`:
-  /// <pre>
+  /// ```
   /// import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
   ///
   /// List<MediaDeviceInfo> devices = await rtc.navigator.mediaDevices.enumerateDevices();
-  /// </pre>
+  /// ```
   final String? deviceId;
 
   /// Attempt to use noiseSuppression option (if supported by the platform)
@@ -269,6 +283,9 @@ class AudioCaptureOptions extends LocalTrackOptions {
   /// set to false to only toggle enabled instead of stop/replaceTrack for muting
   final bool stopAudioCaptureOnMute;
 
+  /// A processor to apply to the audio track.
+  final TrackProcessor<AudioProcessorOptions>? processor;
+
   const AudioCaptureOptions({
     this.deviceId,
     this.noiseSuppression = true,
@@ -278,11 +295,12 @@ class AudioCaptureOptions extends LocalTrackOptions {
     this.voiceIsolation = true,
     this.typingNoiseDetection = true,
     this.stopAudioCaptureOnMute = true,
+    this.processor,
   });
 
   @override
   Map<String, dynamic> toMediaConstraintsMap() {
-    var constraints = <String, dynamic>{};
+    final constraints = <String, dynamic>{};
 
     if (Native.bypassVoiceProcessing) {
       constraints['optional'] = <Map<String, dynamic>>[
@@ -320,13 +338,15 @@ class AudioCaptureOptions extends LocalTrackOptions {
       }
     }
 
-    if (deviceId != null) {
+    if (deviceId != null && deviceId!.isNotEmpty) {
       if (kIsWeb) {
-        constraints['deviceId'] = deviceId;
+        if (isChrome129OrLater()) {
+          constraints['deviceId'] = {'exact': deviceId};
+        } else {
+          constraints['deviceId'] = {'ideal': deviceId};
+        }
       } else {
-        constraints['optional']
-            .cast<Map<String, dynamic>>()
-            .add(<String, dynamic>{'sourceId': deviceId});
+        constraints['optional'].cast<Map<String, dynamic>>().add(<String, dynamic>{'sourceId': deviceId});
       }
     }
     return constraints;

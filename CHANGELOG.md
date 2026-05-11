@@ -1,5 +1,224 @@
 # CHANGELOG
 
+## 2.7.0
+
+* Added: Add setVideoDimensions for remote track publications
+* Added: Add audio renderer API for receiving raw audio frames
+* Changed: Bump flutter-webrtc to 1.4.0 and upgrade to libwebrtc m144
+* Fixed: Add signal RTT tracking via pingReq/pongResp
+* Fixed: Add jitter to reconnect retry delays
+* Fixed: Fix missing params in CameraCaptureOptions.copyWith
+* Fixed: Fix missing RoomReconnectedEvent and incorrect SyncState timing during signal-only reconnection
+* Fixed: Fix VP9/SVC dynacast layer handling
+* Fixed: Stop processor on track end
+* Fixed: Include last server offer in SyncState during reconnection
+
+## 2.6.5
+
+* Added: Send reconnect reason to server during WebSocket reconnection
+* Fixed: setProcessor() now uses VideoProcessorOptions for video tracks instead of AudioProcessorOptions
+* Fixed: Fix wildcard variable lint warnings to improve pub.dev score
+* Fixed: Preserve Bluetooth and AirPlay options when forcing speaker output on iOS
+* Fixed: MissingPluginException when stopping audio visualizer on Android/iOS
+* Fixed: Fix microphone stopping after pre-connect audio completes
+* Fixed: Duplicate tracks published when setCameraEnabled called rapidly
+
+## 2.6.4
+
+* Added: Add web support for pre-connect audio buffer
+* Fixed: Remove duplicate sendLeave
+* Fixed: Fix setVideoInputDevice not switching camera
+* Fixed: Web pre-connect audio buffer using wrong sample rate
+* Fixed: Fix iOS audio renderer resource leak and remove Android 32-bit dead code
+* Fixed: Fix web audio capture not starting on Safari due to suspended AudioContext
+* Performance: Send raw PCM bytes in audio renderer instead of boxed int arrays
+
+## 2.6.3
+
+* Fixed: Fix publisher connection causing redundant renegotiations on lower-end devices
+* Fixed: Use explicit show clauses for foundation imports
+* Fixed: Fix concurrent modification on collection iteration during async operations
+* Fixed: Fix crash when writing to closed data stream controllers
+* Fixed: Fix region URL provider cache using wrong time unit and wrong field check for regions in leave event
+* Chore: Update protobuf to v1.44.0
+
+## 2.6.2
+
+* Added: Bitrate priority control APIs
+* Fixed: Windows: stop camera after unpublishing video track
+* Fixed: Keep mute state in sync with server
+* Fixed: Fix example prejoin device dropdown handling
+* Chore: Mark LocalVideoTrack constructor as internal for consistency with LocalAudioTrack
+* Chore: Update protobuf dependency to v6.0.0
+* Chore: Skip iOS platform download in CI
+
+## 2.6.1
+
+* Fixed: Enable E2EE for VP9 codec
+* Fixed: Correct spelling in E2EE log and error messages
+* Fixed: Ensure all dispose functions are executed even if one throws
+* Fixed: Fix microphone label typo in example app prejoin audio settings
+* Docs: Fix typos and inconsistencies in README and CHANGELOG
+
+## 2.6.0
+
+* Session API
+* Allow customizing screen share dialog labels for localization
+
+## 2.5.4
+
+* Added pre-connect audio buffering
+* Added token source API with caching and endpoint helpers
+* Enabled software AEC/NS/AGC for Linux
+* Added event logging with public/internal tagging
+* Migrated manual JSON serialization to json_serializable code generation
+* Re-enabled Flutter lint warnings and fixed existing issues
+* Improved reliable data channel buffering, sequencing, and added integration tests
+* Fixed race condition with pending tracks
+
+## 2.5.3
+
+* Feat: Data Packet Cryptor (#873)
+* Feat: Add E2EE support for H265 (#864)
+* Fix: fix async call for update participant info (#897)
+* Move the accessToken to header (#891)
+* Bumpup and clamp connection timeout, fix the comment (#893)
+* Fix events emit order (#902)
+
+## 2.5.2
+
+* Fix missing properties for TextStreamInfo (#881)
+* Enum for TextStreamOperationType (#882)
+* Fix stream progress (#884)
+
+## 2.5.1
+
+* Fix Publication's track property initialization (#867)
+* Fix Missing attributes in data stream (#865)
+* Fix Internal WebRTC pod version conflict (#876)
+
+## 2.5.0+hotfix.3
+
+* fix: Fix @internal conflicting imports from package meta or flutter/foundation.
+
+## 2.5.0+hotfix.2
+
+* hotfix: bump libwebrtc to m137.7151.03 to support H.265 (#837)
+* feat: Expose ParticipantState (#848)
+* chore: Update protobuf to v1.39.2 (#847)
+
+## 2.5.0+hotfix.1
+
+* fix: Switch to livekit fork of noise for 16KB page support (#839)
+* hotfix: bump libwebrtc to m137.7151.01 for android (#837)
+* fix: tighten VideoTrackRenderer Widget (#695)
+
+## 2.5.0
+
+* Bump flutter-webrtc to 1.0.0.
+* Upgrade libwebrtc to m137.7151
+* fix: E2EE bug for Chrome. (#832)
+* fix(web, firefox): backup old values before overwriting them (#819)
+* fix: memory leak visualizer stop android (#831)
+* fix: ensure engine always has correct device id if switching camera fails (#820)
+* fix: Always emit RoomDisconnectedEvent when the reason is clientInitiated. (#821)
+* fix: sif frame enqueuing with e2ee (#822)
+* fix: update camera `deviceId` when track is null (#814)
+* feat: Audio Visualizer for Windows/Linux. (#739)
+
+## 2.4.9
+
+* Added: Attribute typings for agent and transcription (#811)
+* Changed: Enum for VideoView.fit (#806)
+* Chore: Update protobuf protocol to v1.39.2 (#812)
+
+## 2.4.8
+
+* fix: fix room.disconnect when pending reconnect. (#802)
+* fix: fix bitrate display for remote video track. (#801)
+* feat: add a flag to skip auto native audio config (#797)
+* fix: sif detection for e2ee (#788)
+* chore: Update protobuf dep (#790)
+
+## 2.4.7
+
+* fix: interop for encode and decode function in e2ee cryptor (#785)
+* chore: Unorder the lossy data channel (#783)
+* chore: bump flutter-webrtc to 0.14.1.
+* fix: mitigate reconnect loop (#780)
+
+## 2.4.6
+
+* feat: Add smoothTransition option for AudioVisualizer. (#773)
+* fix: Fix deadlock when creating a frame cryptor on iOS/macOS.
+* fix: add task runner for linux to fix crashes.
+
+## 2.4.5
+
+* feat: noise filter for flutter web. (#762)
+
+## 2.4.4
+
+* feat: data stream
+* fix: calling setSourceEnabled should not affect the current output settings (#754)
+* fix: Calling connect on a disconnected room instance should reset _isClosed. (#752)
+* fix: Fix for Chrome getUserMedia "ideal" Constraint Change.
+* fix: fix duplicate fmtp for vp9 on some old Android devices. (#758)
+
+## 2.4.3
+
+* feat: Automatically configure audio mode for Android. (#746)
+
+## 2.4.2+hotfix.2
+
+* fix: Fix creation timing for local participant. (#749)
+* fix: Filter out non-video codecs for fast video track publication. (#747)
+
+## 2.4.2+hotfix.1
+
+* fix: fixed bug for fast track publish.
+
+## 2.4.2
+
+* fix: Fixed the echo issue on some specific models of Android devices.
+* chore: Bbmp version for flutter-webrtc.
+* fix: Improve browser version detection, fix issue #730 (#738)
+* feat: Fast track publication. (#720)
+* chore: Remove `bypassVoiceProcessing = true` settings for connect page. (#693)
+* fix: [bug] Crash when join room on Windows.
+* fix: Disable selectAudioInput for mobile platforms.
+
+## 2.4.1
+
+* feat: VideoRenderer support cache renderer. (#723)
+* feat: Visualizer for web. (#718)
+* fix: Fix bar Visualizer overflow for Android. (#717)
+* fix: disconnect reason inconsistent. (#715)
+* fix: remove stats video data print from logs (#716)
+
+## 2.4.0
+
+* feat: RPC. (#682)
+* fix: Properly handle broadcast capture state (#705)
+
+## 2.3.6
+
+* Emit a final empty AudioVisualizerEvent after track stops (#701)
+* fix: Improve speaker switching logic for iOS. (#692)
+
+## 2.3.5
+
+* feat: add TrackProcessor support. (#657)
+* fix: bug for mute/unmute and speaker switch. (#684)
+
+## 2.3.4+hotfix.2
+
+* fix: side effects for stop remote track.
+
+## 2.3.4+hotfix.1
+
+* fix: bug for speakerPhone switch. (#672)
+
 ## 2.3.4
 
 * fix bypass voice processing not work. (#668)
@@ -35,7 +254,7 @@
 
 * feat: support bypass voice processing. (#595)
 * fix: Dispose LocalParticipant when room.disconnect. (#609)
-* Fix spelling error in method name: _checkPremissions to _checkPermissions (#605)
+* Fix spelling error in method name: _checkPremissions to_checkPermissions (#605)
 * fix: fix speaker switching behavior for android. (#604)
 * fix: Optimize stats display (#602)
 * fix: Handle disconnect reasons correctly. (#594)
@@ -142,6 +361,7 @@ feat: provide option to skip stop/restartTrack for mute/unmute (#516)
 ## 2.0.0
 
 ## Breaking Changes
+
 There are several breaking changes between v1 and v2. Please consult our [migration guide](https://docs.livekit.io/guides/migrate-from-v1/) when upgrading to v2.
 
 * `Room.participants` was renamed to `Room.remoteParticipants`
@@ -215,8 +435,8 @@ There are several breaking changes between v1 and v2. Please consult our [migrat
 
 ## 1.5.2
 
-* Non-functional update, forcing the versions in 
-  `'ios/livekit_client.podspec', 'macos/livekit_client.podspec', 'lib/src/livekit.dart'` 
+* Non-functional update, forcing the versions in
+  `'ios/livekit_client.podspec', 'macos/livekit_client.podspec', 'lib/src/livekit.dart'`
   consistent with pubspec.yaml
 
 ## 1.5.1
@@ -242,7 +462,7 @@ There are several breaking changes between v1 and v2. Please consult our [migrat
 * Fix: fix the speakerPhone switch issue for Android.
 * Fix: fix iOS cannot publish the audio track correctly.
 * Fix: fix crash when re-publish video track on Windows/Linux.
-* Fix: set preferCurrentTab to false by default 
+* Fix: set preferCurrentTab to false by default
 
 ## 1.4.1
 

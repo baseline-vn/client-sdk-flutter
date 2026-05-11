@@ -30,13 +30,13 @@ import '../track/local/local.dart';
 import '../track/remote/remote.dart';
 import '../track/remote/video.dart';
 import '../types/other.dart';
+import '../types/video_dimensions.dart';
 import '../utils.dart';
 import 'track_publication.dart';
 
 /// Represents a track publication from a RemoteParticipant. Provides methods to
 /// control if we should subscribe to the track, and its quality (for video).
-class RemoteTrackPublication<T extends RemoteTrack>
-    extends TrackPublication<T> {
+class RemoteTrackPublication<T extends RemoteTrack> extends TrackPublication<T> {
   /// The [RemoteParticipant] this [RemoteTrackPublication] belongs to.
   @override
   final RemoteParticipant participant;
@@ -48,8 +48,11 @@ class RemoteTrackPublication<T extends RemoteTrack>
   int? _fps;
   int get fps => _fps ?? 0;
 
-  VideoQuality _videoQuality = VideoQuality.HIGH;
-  VideoQuality get videoQuality => _videoQuality;
+  VideoQuality? _videoQuality = VideoQuality.HIGH;
+  VideoQuality get videoQuality => _videoQuality ?? VideoQuality.HIGH;
+
+  VideoDimensions? _videoDimensions;
+  VideoDimensions? get videoDimensions => _videoDimensions;
 
   /// The server may pause the track when they are bandwidth limitations and resume
   /// when there is more capacity. This property will be updated when the track is
@@ -74,9 +77,7 @@ class RemoteTrackPublication<T extends RemoteTrack>
 
   TrackSubscriptionState get subscriptionState {
     if (!_subscriptionAllowed) return TrackSubscriptionState.notAllowed;
-    return super.subscribed
-        ? TrackSubscriptionState.subscribed
-        : TrackSubscriptionState.unsubscribed;
+    return super.subscribed ? TrackSubscriptionState.subscribed : TrackSubscriptionState.unsubscribed;
   }
 
   @internal
@@ -105,7 +106,7 @@ class RemoteTrackPublication<T extends RemoteTrack>
     required this.participant,
     required lk_models.TrackInfo info,
     T? track,
-  }) : super(info: info) {
+  }) : super(info: info, track: track) {
     logger.fine('RemoteTrackPublication.init track: $track, info: $info');
 
     // register dispose func
@@ -121,15 +122,12 @@ class RemoteTrackPublication<T extends RemoteTrack>
       cancelFunc: (func) => _cancelPendingTrackSettingsUpdateRequest = func,
       wait: const Duration(milliseconds: 1500),
     );
-
-    updateTrack(track);
   }
 
   @internal
   @override
   void updateFromInfo(lk_models.TrackInfo info) {
-    logger.fine(
-        'RemoteTrackPublication.updateFromInfo sid: ${info.sid} muted: ${info.muted}');
+    logger.fine('RemoteTrackPublication.updateFromInfo sid: ${info.sid} muted: ${info.muted}');
     super.updateFromInfo(info);
     track?.updateMuted(info.muted);
     _metadataMuted = info.muted;
@@ -160,13 +158,11 @@ class RemoteTrackPublication<T extends RemoteTrack>
         .where((e) => e.hasSize)
         .map((e) => e.size);
 
-    logger.finer(
-        '[Visibility] ${track?.sid} watching ${viewSizes.length} views...');
+    logger.finer('[Visibility] ${track?.sid} watching ${viewSizes.length} views...');
 
     if (viewSizes.isNotEmpty) {
       // compute largest size
-      final largestSize =
-          viewSizes.reduce((value, element) => maxOfSizes(value, element));
+      final largestSize = viewSizes.reduce((value, element) => maxOfSizes(value, element));
 
       settings
         ..disabled = false
@@ -186,8 +182,7 @@ class RemoteTrackPublication<T extends RemoteTrack>
     }
   }
 
-  void _sendPendingTrackSettingsUpdateRequest(
-      lk_rtc.UpdateTrackSettings settings) {
+  void _sendPendingTrackSettingsUpdateRequest(lk_rtc.UpdateTrackSettings settings) {
     logger.fine('[Visibility] Sending... ${settings.toProto3Json()}');
     participant.room.engine.signalClient.sendUpdateTrackSettings(settings);
   }
@@ -234,9 +229,44 @@ class RemoteTrackPublication<T extends RemoteTrack>
     return didUpdate;
   }
 
+  bool _canUpdateManualVideoSettings() {
+    if (kind != TrackType.VIDEO) {
+      logger.warning('Manual video setting updates are only supported for video tracks');
+      return false;
+    }
+
+    if (!subscribed) {
+      logger.warning('Manual video setting update ignored because the publication is not subscribed');
+      return false;
+    }
+
+    if (participant.room.roomOptions.adaptiveStream) {
+      logger.warning('Manual video setting update ignored because adaptive stream is enabled');
+      return false;
+    }
+
+    return true;
+  }
+
   Future<void> setVideoQuality(VideoQuality newValue) async {
     if (newValue == _videoQuality) return;
+    if (!_canUpdateManualVideoSettings()) return;
     _videoQuality = newValue;
+    _videoDimensions = null;
+    sendUpdateTrackSettings();
+  }
+
+  /// Set preferred video dimensions for this track.
+  ///
+  /// Server will choose the appropriate layer based on these dimensions.
+  /// Will override previous calls to [setVideoQuality].
+  Future<void> setVideoDimensions(VideoDimensions newValue) async {
+    if (newValue.width == _videoDimensions?.width && newValue.height == _videoDimensions?.height) {
+      return;
+    }
+    if (!_canUpdateManualVideoSettings()) return;
+    _videoDimensions = newValue;
+    _videoQuality = null;
     sendUpdateTrackSettings();
   }
 
@@ -244,6 +274,7 @@ class RemoteTrackPublication<T extends RemoteTrack>
   /// It's only supported for video codecs that support SVC currently.
   Future<void> setVideoFPS(int newValue) async {
     if (newValue == _fps) return;
+    if (!_canUpdateManualVideoSettings()) return;
     _fps = newValue;
     sendUpdateTrackSettings();
   }
@@ -309,7 +340,14 @@ class RemoteTrackPublication<T extends RemoteTrack>
       disabled: !_enabled,
     );
     if (kind == TrackType.VIDEO) {
-      settings.quality = _videoQuality.toPBType();
+      if (_videoDimensions != null) {
+        settings.width = _videoDimensions!.width;
+        settings.height = _videoDimensions!.height;
+      } else if (_videoQuality != null) {
+        settings.quality = _videoQuality!.toPBType();
+      } else {
+        settings.quality = VideoQuality.HIGH.toPBType();
+      }
       if (_fps != null) settings.fps = _fps!;
     }
     participant.room.engine.signalClient.sendUpdateTrackSettings(settings);

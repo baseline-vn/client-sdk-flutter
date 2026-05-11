@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:livekit_example/method_channels/replay_kit_channel.dart';
 
 import '../exts.dart';
 import '../utils.dart';
@@ -15,10 +14,12 @@ import '../widgets/participant_info.dart';
 class RoomPage extends StatefulWidget {
   final Room room;
   final EventsListener<RoomEvent> listener;
+  final bool fastConnection;
 
   const RoomPage(
     this.room,
     this.listener, {
+    this.fastConnection = false,
     super.key,
   });
 
@@ -29,8 +30,7 @@ class RoomPage extends StatefulWidget {
 class _RoomPageState extends State<RoomPage> {
   List<ParticipantTrack> participantTracks = [];
   EventsListener<RoomEvent> get _listener => widget.listener;
-  bool get fastConnection => widget.room.engine.fastConnectOptions != null;
-  bool _flagStartedReplayKit = false;
+  bool get fastConnection => widget.fastConnection;
   @override
   void initState() {
     super.initState();
@@ -46,18 +46,13 @@ class _RoomPageState extends State<RoomPage> {
     });
 
     if (lkPlatformIs(PlatformType.android)) {
-      Hardware.instance.setSpeakerphoneOn(true);
-    }
-
-    if (lkPlatformIs(PlatformType.iOS)) {
-      ReplayKitChannel.listenMethodChannel(widget.room);
+      unawaited(Hardware.instance.setSpeakerphoneOn(true));
     }
 
     if (lkPlatformIsDesktop()) {
       onWindowShouldClose = () async {
         unawaited(widget.room.disconnect());
-        await _listener.waitFor<RoomDisconnectedEvent>(
-            duration: const Duration(seconds: 5));
+        await _listener.waitFor<RoomDisconnectedEvent>(duration: const Duration(seconds: 5));
       };
     }
   }
@@ -65,16 +60,15 @@ class _RoomPageState extends State<RoomPage> {
   @override
   void dispose() {
     // always dispose listener
-    (() async {
-      if (lkPlatformIs(PlatformType.iOS)) {
-        ReplayKitChannel.closeReplayKit();
-      }
-      widget.room.removeListener(_onRoomDidUpdate);
-      await _listener.dispose();
-      await widget.room.dispose();
-    })();
+    widget.room.removeListener(_onRoomDidUpdate);
+    unawaited(_disposeRoomAsync());
     onWindowShouldClose = null;
     super.dispose();
+  }
+
+  Future<void> _disposeRoomAsync() async {
+    await _listener.dispose();
+    await widget.room.dispose();
   }
 
   /// for more information, see [event types](https://docs.livekit.io/client/events/#events)
@@ -83,19 +77,18 @@ class _RoomPageState extends State<RoomPage> {
       if (event.reason != null) {
         print('Room disconnected: reason => ${event.reason}');
       }
-      WidgetsBindingCompatible.instance?.addPostFrameCallback(
-          (timeStamp) => Navigator.popUntil(context, (route) => route.isFirst));
+      WidgetsBindingCompatible.instance
+          ?.addPostFrameCallback((timeStamp) => Navigator.popUntil(context, (route) => route.isFirst));
     })
     ..on<ParticipantEvent>((event) {
       // sort participants on many track events as noted in documentation linked above
       _sortParticipants();
     })
     ..on<RoomRecordingStatusChanged>((event) {
-      context.showRecordingStatusChangedDialog(event.activeRecording);
+      unawaited(context.showRecordingStatusChangedDialog(event.activeRecording));
     })
     ..on<RoomAttemptReconnectEvent>((event) {
-      print(
-          'Attempting to reconnect ${event.attempt}/${event.maxAttemptsRetry}, '
+      print('Attempting to reconnect ${event.attempt}/${event.maxAttemptsRetry}, '
           '(${event.nextRetryDelaysInMs}ms delay until next attempt)');
     })
     ..on<LocalTrackSubscribedEvent>((event) {
@@ -107,13 +100,11 @@ class _RoomPageState extends State<RoomPage> {
     ..on<TrackUnsubscribedEvent>((_) => _sortParticipants())
     ..on<TrackE2EEStateEvent>(_onE2EEStateEvent)
     ..on<ParticipantNameUpdatedEvent>((event) {
-      print(
-          'Participant name updated: ${event.participant.identity}, name => ${event.name}');
+      print('Participant name updated: ${event.participant.identity}, name => ${event.name}');
       _sortParticipants();
     })
     ..on<ParticipantMetadataUpdatedEvent>((event) {
-      print(
-          'Participant metadata updated: ${event.participant.identity}, metadata => ${event.metadata}');
+      print('Participant metadata updated: ${event.participant.identity}, metadata => ${event.metadata}');
     })
     ..on<RoomMetadataChangedEvent>((event) {
       print('Room metadata changed: ${event.metadata}');
@@ -125,12 +116,12 @@ class _RoomPageState extends State<RoomPage> {
       } catch (err) {
         print('Failed to decode: $err');
       }
-      context.showDataReceivedDialog(decoded);
+      unawaited(context.showDataReceivedDialog(decoded));
     })
     ..on<AudioPlaybackStatusChanged>((event) async {
       if (!widget.room.canPlaybackAudio) {
         print('Audio playback failed for iOS Safari ..........');
-        bool? yesno = await context.showPlayAudioManuallyDialog();
+        final yesno = await context.showPlayAudioManuallyDialog();
         if (yesno == true) {
           await widget.room.startAudio();
         }
@@ -139,18 +130,21 @@ class _RoomPageState extends State<RoomPage> {
 
   void _askPublish() async {
     final result = await context.showPublishDialog();
+    if (!mounted) return;
     if (result != true) return;
     // video will fail when running in ios simulator
     try {
       await widget.room.localParticipant?.setCameraEnabled(true);
     } catch (error) {
       print('could not publish video: $error');
+      if (!mounted) return;
       await context.showErrorDialog(error);
     }
     try {
       await widget.room.localParticipant?.setMicrophoneEnabled(true);
     } catch (error) {
       print('could not publish audio: $error');
+      if (!mounted) return;
       await context.showErrorDialog(error);
     }
   }
@@ -164,8 +158,8 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _sortParticipants() {
-    List<ParticipantTrack> userMediaTracks = [];
-    List<ParticipantTrack> screenTracks = [];
+    final userMediaTracks = <ParticipantTrack>[];
+    final screenTracks = <ParticipantTrack>[];
     for (var participant in widget.room.remoteParticipants.values) {
       for (var t in participant.videoTrackPublications) {
         if (t.isScreenShare) {
@@ -203,37 +197,19 @@ class _RoomPageState extends State<RoomPage> {
       }
 
       // joinedAt
-      return a.participant.joinedAt.millisecondsSinceEpoch -
-          b.participant.joinedAt.millisecondsSinceEpoch;
+      return a.participant.joinedAt.millisecondsSinceEpoch - b.participant.joinedAt.millisecondsSinceEpoch;
     });
 
-    final localParticipantTracks =
-        widget.room.localParticipant?.videoTrackPublications;
+    final localParticipantTracks = widget.room.localParticipant?.videoTrackPublications;
     if (localParticipantTracks != null) {
       for (var t in localParticipantTracks) {
         if (t.isScreenShare) {
-          if (lkPlatformIs(PlatformType.iOS)) {
-            if (!_flagStartedReplayKit) {
-              _flagStartedReplayKit = true;
-
-              ReplayKitChannel.startReplayKit();
-            }
-          }
           screenTracks.add(ParticipantTrack(
             participant: widget.room.localParticipant!,
             type: ParticipantTrackType.kScreenShare,
           ));
         } else {
-          if (lkPlatformIs(PlatformType.iOS)) {
-            if (_flagStartedReplayKit) {
-              _flagStartedReplayKit = false;
-
-              ReplayKitChannel.closeReplayKit();
-            }
-          }
-
-          userMediaTracks.add(
-              ParticipantTrack(participant: widget.room.localParticipant!));
+          userMediaTracks.add(ParticipantTrack(participant: widget.room.localParticipant!));
         }
       }
     }
@@ -250,14 +226,12 @@ class _RoomPageState extends State<RoomPage> {
               children: [
                 Expanded(
                     child: participantTracks.isNotEmpty
-                        ? ParticipantWidget.widgetFor(participantTracks.first,
-                            showStatsLayer: true)
+                        ? ParticipantWidget.widgetFor(participantTracks.first, showStatsLayer: true)
                         : Container()),
                 if (widget.room.localParticipant != null)
                   SafeArea(
                     top: false,
-                    child: ControlsWidget(
-                        widget.room, widget.room.localParticipant!),
+                    child: ControlsWidget(widget.room, widget.room.localParticipant!),
                   )
               ],
             ),
@@ -273,8 +247,7 @@ class _RoomPageState extends State<RoomPage> {
                     itemBuilder: (BuildContext context, int index) => SizedBox(
                       width: 180,
                       height: 120,
-                      child: ParticipantWidget.widgetFor(
-                          participantTracks[index + 1]),
+                      child: ParticipantWidget.widgetFor(participantTracks[index + 1]),
                     ),
                   ),
                 )),

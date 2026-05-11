@@ -1,28 +1,15 @@
-// Copyright 2024 LiveKit, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 import 'dart:async';
-import 'dart:js_util' as jsutil;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
 
-import 'crypto.dart' as crypto;
 import 'e2ee.logger.dart';
 import 'e2ee.utils.dart';
 
 const KEYRING_SIZE = 16;
+const IV_LENGTH = 12;
 
 class KeyOptions {
   KeyOptions({
@@ -38,8 +25,6 @@ class KeyOptions {
   Uint8List ratchetSalt;
   int ratchetWindowSize = 0;
   int failureTolerance;
-
-  /// usually automatically set by whatever livekit sends you in the JoinResponse
   Uint8List? uncryptedMagicBytes;
   int keyRingSze;
   bool discardFrameWhenCryptorNotReady;
@@ -71,7 +56,8 @@ class KeyProvider {
         keyOptions: keyProviderOptions,
       );
       if (sharedKey.isNotEmpty) {
-        keys.setKey(sharedKey);
+        // Should be able to set the key without waiting here.
+        unawaited(keys.setKey(sharedKey));
       }
       //keys.on(KeyHandlerEvent.KeyRatcheted, emitRatchetedKeys);
       participantKeys[participantIdentity] = keys;
@@ -88,10 +74,10 @@ class KeyProvider {
     return sharedKeyHandler!;
   }
 
-  void setSharedKey(Uint8List key, {int keyIndex = 0}) {
+  Future<void> setSharedKey(Uint8List key, {int keyIndex = 0}) async {
     logger.info('setting shared key');
     sharedKey = key;
-    getSharedKeyHandler().setKey(key, keyIndex: keyIndex);
+    await getSharedKeyHandler().setKey(key, keyIndex: keyIndex);
   }
 
   void setSifTrailer(Uint8List sifTrailer) {
@@ -156,14 +142,13 @@ class ParticipantKeyHandler {
   }
 
   Future<Uint8List?> exportKey(int? keyIndex) async {
-    var currentMaterial = getKeySet(keyIndex)?.material;
+    final currentMaterial = getKeySet(keyIndex)?.material;
     if (currentMaterial == null) {
       return null;
     }
     try {
-      var key = await jsutil.promiseToFuture<ByteBuffer>(
-          crypto.exportKey('raw', currentMaterial));
-      return key.asUint8List();
+      final key = await worker.crypto.subtle.exportKey('raw', currentMaterial).toDart as JSArrayBuffer;
+      return key.toDart.asUint8List();
     } catch (e) {
       logger.warning('exportKey: $e');
       return null;
@@ -171,27 +156,27 @@ class ParticipantKeyHandler {
   }
 
   Future<Uint8List?> ratchetKey(int? keyIndex) async {
-    var currentMaterial = getKeySet(keyIndex)?.material;
+    final currentMaterial = getKeySet(keyIndex)?.material;
     if (currentMaterial == null) {
       return null;
     }
-    var newKey = await ratchet(currentMaterial, keyOptions.ratchetSalt);
-    var newMaterial = await ratchetMaterial(
-        currentMaterial, crypto.jsArrayBufferFrom(newKey));
-    var newKeySet = await deriveKeys(newMaterial, keyOptions.ratchetSalt);
+    final newKey = await ratchet(currentMaterial, keyOptions.ratchetSalt);
+    final newMaterial = await ratchetMaterial(currentMaterial, newKey.buffer);
+    final newKeySet = await deriveKeys(newMaterial, keyOptions.ratchetSalt);
     await setKeySetFromMaterial(newKeySet, keyIndex ?? currentKeyIndex);
     return newKey;
   }
 
-  Future<web.CryptoKey> ratchetMaterial(
-      web.CryptoKey currentMaterial, ByteBuffer newKeyBuffer) async {
-    var newMaterial = await jsutil.promiseToFuture(crypto.importKey(
-      'raw',
-      newKeyBuffer,
-      (currentMaterial.algorithm as crypto.Algorithm).name,
-      false,
-      ['deriveBits', 'deriveKey'],
-    ));
+  Future<web.CryptoKey> ratchetMaterial(web.CryptoKey currentMaterial, ByteBuffer newKeyBuffer) async {
+    final newMaterial = await worker.crypto.subtle
+        .importKey(
+          'raw',
+          newKeyBuffer.toJS,
+          currentMaterial.algorithm.getProperty('name'.toJS),
+          false,
+          ['deriveBits', 'deriveKey'].jsify() as JSArray<JSString>,
+        )
+        .toDart;
     return newMaterial;
   }
 
@@ -200,9 +185,12 @@ class ParticipantKeyHandler {
   }
 
   Future<void> setKey(Uint8List key, {int keyIndex = 0}) async {
-    var keyMaterial = await crypto.impportKeyFromRawData(key,
-        webCryptoAlgorithm: 'PBKDF2', keyUsages: ['deriveBits', 'deriveKey']);
-    var keySet = await deriveKeys(
+    final keyMaterial = await worker.crypto.subtle
+        .importKey('raw', key.toJS, {'name': 'PBKDF2'.toJS}.jsify() as JSAny, false,
+            ['deriveBits', 'deriveKey'].jsify() as JSArray<JSString>)
+        .toDart;
+
+    final keySet = await deriveKeys(
       keyMaterial,
       keyOptions.ratchetSalt,
     );
@@ -221,32 +209,33 @@ class ParticipantKeyHandler {
   /// Derives a set of keys from the master key.
   /// See https://tools.ietf.org/html/draft-omara-sframe-00#section-4.3.1
   Future<KeySet> deriveKeys(web.CryptoKey material, Uint8List salt) async {
-    var algorithmOptions =
-        getAlgoOptions((material.algorithm as crypto.Algorithm).name, salt);
-
+    final algorithmName = material.algorithm.getProperty('name'.toJS) as JSString;
+    final algorithmOptions = getAlgoOptions(algorithmName.toDart, salt);
     // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey#HKDF
     // https://developer.mozilla.org/en-US/docs/Web/API/HkdfParams
-    var encryptionKey =
-        await jsutil.promiseToFuture<web.CryptoKey>(crypto.deriveKey(
-      jsutil.jsify(algorithmOptions),
-      material,
-      jsutil.jsify({'name': 'AES-GCM', 'length': 128}),
-      false,
-      ['encrypt', 'decrypt'],
-    ));
+    final encryptionKey = await worker.crypto.subtle
+        .deriveKey(
+          algorithmOptions.jsify() as web.AlgorithmIdentifier,
+          material,
+          {'name': 'AES-GCM', 'length': 128}.jsify() as web.AlgorithmIdentifier,
+          false,
+          ['encrypt', 'decrypt'].jsify() as JSArray<JSString>,
+        )
+        .toDart;
 
-    return KeySet(material, encryptionKey);
+    return KeySet(material, encryptionKey as web.CryptoKey);
   }
 
   /// Ratchets a key. See
   /// https://tools.ietf.org/html/draft-omara-sframe-00#section-4.3.5.1
 
   Future<Uint8List> ratchet(web.CryptoKey material, Uint8List salt) async {
-    var algorithmOptions = getAlgoOptions('PBKDF2', salt);
+    final algorithmOptions = getAlgoOptions('PBKDF2', salt);
 
     // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveBits
-    var newKey = await jsutil.promiseToFuture<ByteBuffer>(
-        crypto.deriveBits(jsutil.jsify(algorithmOptions), material, 256));
-    return newKey.asUint8List();
+    final newKey = await worker.crypto.subtle
+        .deriveBits(algorithmOptions.jsify() as web.AlgorithmIdentifier, material, 256)
+        .toDart;
+    return newKey.toDart.asUint8List();
   }
 }
