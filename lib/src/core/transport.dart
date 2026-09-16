@@ -55,8 +55,8 @@ class TrackBitrateInfo {
 }
 
 typedef TransportOnOffer = void Function(rtc.RTCSessionDescription offer);
-typedef PeerConnectionCreate = Future<rtc.RTCPeerConnection> Function(Map<String, dynamic> configuration,
-    [Map<String, dynamic> constraints]);
+typedef PeerConnectionCreate =
+    Future<rtc.RTCPeerConnection> Function(Map<String, dynamic> configuration, [Map<String, dynamic> constraints]);
 
 /// a wrapper around PeerConnection
 class Transport extends Disposable {
@@ -104,8 +104,11 @@ class Transport extends Disposable {
     });
   }
 
-  static Future<Transport> create(PeerConnectionCreate peerConnectionCreate,
-      {RTCConfiguration? rtcConfig, required ConnectOptions connectOptions}) async {
+  static Future<Transport> create(
+    PeerConnectionCreate peerConnectionCreate, {
+    RTCConfiguration? rtcConfig,
+    required ConnectOptions connectOptions,
+  }) async {
     rtcConfig ??= const RTCConfiguration();
     logger.fine('[PCTransport] creating ${rtcConfig.toMap()}');
     final pc = await peerConnectionCreate(rtcConfig.toMap());
@@ -180,6 +183,10 @@ class Transport extends Disposable {
     // actually negotiate
     logger.fine('starting to negotiate');
     final offer = await pc.createOffer(options?.toMap() ?? <String, dynamic>{});
+
+    if ((offer.sdp ?? '').contains('goog-sped-v1')) {
+      logger.fine('negotiate with sped (WARP)');
+    }
 
     final sdpParsed = sdp_transform.parse(offer.sdp ?? '');
     sdpParsed['media']?.forEach((media) {

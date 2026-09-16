@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## 2.13.0
+
+* Changed: Bump libwebrtc to m150(flutter-webrtc 1.6.2), added `enableWARP` and `zeroPlayoutDelay` options to LiveKitClient.initialize
+* Changed: Bump flutter-webrtc to 1.6.2+hotfix.1, fixed crash on Linux/Windows and fix resource leak by releasing event channel on Darwin
+* Changed: Bump flutter_webrtc to 1.6.2+hotfix.3
+* Fixed: Session migration (server `Leave{action: RESUME}`) now resumes the session instead of escalating to a full reconnect, so remote participants are no longer dropped and re-added
+* Fixed: Reconnect requests are no longer dropped when one attempt is already running, and a reason that requires a full reconnect is no longer lost when a later request replaces it
+* Fixed: A resume whose signal connection drops before it completes is retried instead of being reported as reconnected
+* Fixed: Fail over to other Cloud regions when the initial connection is rejected with 403
+
+## 2.12.0
+
+* Added: Add AudioSessionException for iOS audio session failures
+* Changed: Microphone permission and audio session failures now throw TrackCreateException / AudioSessionException instead of AudioProcessingException
+* Changed: Raise minimum supported versions to Flutter 3.38 / Dart 3.10, the floor for stable native assets support
+* Changed: Update json_annotation to 4.12 and regenerate serialization code with json_serializable 6.14
+* Fixed: BaseKeyProvider.create now honors the discardFrameWhenCryptorNotReady option instead of always using the default
+* Fixed: Pre-connect audio buffer returns to a reusable state when recording fails to start, instead of ignoring retries and leaking the agent timeout
+* Fixed: Subscriber data channel state events now report the subscriber channel state and correct reliability type, and no longer leak listeners
+* Fixed: CachingTokenSource.fetch now awaits its result, so errors surface and the in-flight entry is cleared correctly
+* Fixed: sendText declares the UTF-8 byte length in the stream header, fixing rejected text streams containing non-ASCII characters
+* Fixed: Android: a failed local recording pre-warm no longer aborts microphone capture with AudioProcessingException(applyFailed)
+* Fixed: iOS: the audio session is configured from engine state even before a policy is pushed (pre-connect audio, pre-join mic, playout-only), fixing audio engine error -9001
+* Fixed: iOS/macOS: request microphone permission before audio capture starts, failing fast with TrackCreateException while the app is not in the foreground
+* Fixed: Fix use-after-free crash in TaskRunnerLinux::EnqueueTask when the runner is destroyed before the main loop dispatches a queued task
+
+## 2.11.0
+
+* Added: New DisconnectReason members for newer server disconnect reasons, previously reported as unknown
+* Added: Add DevelopmentTokenSource, the new name for the now-deprecated SandboxTokenSource
+* Changed: Default video degradation preference is now based on the track source (camera maintains framerate, screen share maintains resolution, others balanced) and is applied to the backup codec's sender as well
+* Changed: Update generated protocol definitions to v1.50.4
+* Changed: Unrecognized protobuf enum values from newer servers now fall back to safe defaults, for example a new DisconnectReason maps to unknown
+* Changed: Update dependencies: device_info_plus to 13.x, connectivity_plus 7.3.1, dart_webrtc 1.8.1, synchronized 3.4.1, uuid 4.6.0
+* Changed: Modernize the example app with a redesigned connect page, connection history, room header, focus layout, and an in-room messages panel
+* Fixed: Room.connect no longer ignores the roomOptions argument passed to it
+* Fixed: Room.getSid() now resolves when the room sid is issued after the join response
+* Fixed: Backup codec state is cleared on unpublish and full reconnect, so republishing no longer acts on senders from a torn down connection
+* Fixed: DegradationPreference.disabled now maps to maintainFramerateAndResolution, as WebRTC defines it
+
 ## 2.10.0
 
 * Added: Swift Package Manager support for iOS and macOS. CocoaPods remains fully supported.
