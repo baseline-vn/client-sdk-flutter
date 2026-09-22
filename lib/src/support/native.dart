@@ -452,6 +452,85 @@ class Native {
       logger.warning('broadcastRequestStop did throw error: ${error}');
     }
   }
+
+  // MARK: - Camera Zoom
+
+  /// Sets the camera zoom level for a local video track.
+  ///
+  /// [trackId] is the ID of the local video track.
+  /// [zoomFactor] is the desired zoom level (1.0 = no zoom, higher values zoom in).
+  ///
+  /// Returns a map containing:
+  /// - `success`: whether the zoom was applied
+  /// - `appliedZoomFactor`: the actual zoom factor applied (may be clamped)
+  /// - `minZoomFactor`: minimum supported zoom factor
+  /// - `maxZoomFactor`: maximum supported zoom factor
+  ///
+  /// Throws [PlatformException] if the operation fails.
+  @internal
+  static Future<Map<String, dynamic>> setCameraZoom(
+    String trackId,
+    double zoomFactor,
+  ) async {
+    try {
+      final response = await channel.invokeMethod<dynamic>(
+        'setCameraZoom',
+        <String, dynamic>{
+          'trackId': trackId,
+          'zoomFactor': zoomFactor,
+        },
+      );
+      if (response is Map) {
+        return response.map((key, value) => MapEntry(key.toString(), value));
+      }
+      return <String, dynamic>{};
+    } on MissingPluginException {
+      return _cameraZoomPlatformUnavailable();
+    } on PlatformException catch (error) {
+      if (error.code == 'Unimplemented') {
+        return _cameraZoomPlatformUnavailable();
+      }
+      rethrow;
+    }
+  }
+
+  /// Gets the available zoom range for a local video track's camera.
+  ///
+  /// [trackId] is the ID of the local video track.
+  ///
+  /// Returns a map containing:
+  /// - `minZoomFactor`: minimum supported zoom factor
+  /// - `maxZoomFactor`: maximum supported zoom factor
+  /// - `currentZoomFactor`: current zoom factor
+  ///
+  /// Throws [PlatformException] if the operation fails.
+  @internal
+  static Future<Map<String, dynamic>> getCameraZoomRange(String trackId) async {
+    try {
+      final response = await channel.invokeMethod<dynamic>(
+        'getCameraZoomRange',
+        <String, dynamic>{
+          'trackId': trackId,
+        },
+      );
+      if (response is Map) {
+        return response.map((key, value) => MapEntry(key.toString(), value));
+      }
+      return <String, dynamic>{};
+    } on MissingPluginException {
+      return _cameraZoomPlatformUnavailable();
+    } on PlatformException catch (error) {
+      if (error.code == 'Unimplemented') {
+        return _cameraZoomPlatformUnavailable();
+      }
+      rethrow;
+    }
+  }
+
+  static Map<String, dynamic> _cameraZoomPlatformUnavailable() => <String, dynamic>{
+    'success': false,
+    'error': 'Camera zoom is unavailable on this platform.',
+  };
 }
 
 // Initialize the channel before first reference so method calls can be handled.

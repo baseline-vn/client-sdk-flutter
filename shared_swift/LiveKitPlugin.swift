@@ -841,11 +841,113 @@ public class LiveKitPlugin: NSObject, FlutterPlugin {
             BroadcastManager.shared.requestStop()
             result(true)
         #endif
+        case "setCameraZoom":
+            handleSetCameraZoom(args: args, result: result)
+        case "getCameraZoomRange":
+            handleGetCameraZoomRange(args: args, result: result)
         default:
             print("[LiveKit] method not found: ", call.method)
             result(FlutterMethodNotImplemented)
         }
     }
+}
+
+// MARK: - Camera Zoom
+
+@available(iOS 13.0, *)
+extension LiveKitPlugin {
+    /// Sets the camera zoom level for a given video track.
+    ///
+    /// The zoom level is relative to the device's minimum zoom factor.
+    /// A value of 1.0 means no zoom (minimum), and higher values zoom in.
+    public func handleSetCameraZoom(args: [String: Any?], result: @escaping FlutterResult) {
+        guard let trackId = args["trackId"] as? String else {
+            result(FlutterError(code: "setCameraZoom", message: "trackId is required", details: nil))
+            return
+        }
+
+        guard let zoomFactor = args["zoomFactor"] as? Double else {
+            result(FlutterError(code: "setCameraZoom", message: "zoomFactor is required", details: nil))
+            return
+        }
+
+        #if os(iOS)
+        guard let capturer = getCapturer(for: trackId) else {
+            result(FlutterError(code: "setCameraZoom", message: "Could not find camera capturer for track", details: nil))
+            return
+        }
+
+        guard let device = capturer.captureDevice else {
+            result(FlutterError(code: "setCameraZoom", message: "No capture device available", details: nil))
+            return
+        }
+
+        do {
+            try device.lockForConfiguration()
+
+            // Clamp zoom factor to valid range
+            let minZoom = device.minAvailableVideoZoomFactor
+            let maxZoom = device.maxAvailableVideoZoomFactor
+            let clampedZoom = max(minZoom, min(zoomFactor, maxZoom))
+
+            device.videoZoomFactor = clampedZoom
+            device.unlockForConfiguration()
+
+            result([
+                "success": true,
+                "appliedZoomFactor": clampedZoom,
+                "minZoomFactor": minZoom,
+                "maxZoomFactor": maxZoom,
+            ])
+        } catch {
+            result(FlutterError(code: "setCameraZoom", message: "Failed to set zoom: \(error.localizedDescription)", details: nil))
+        }
+        #else
+        // macOS does not support camera zoom in the same way
+        result(FlutterError(code: "setCameraZoom", message: "Camera zoom is not supported on macOS", details: nil))
+        #endif
+    }
+
+    /// Gets the available zoom range for a given video track's camera.
+    public func handleGetCameraZoomRange(args: [String: Any?], result: @escaping FlutterResult) {
+        guard let trackId = args["trackId"] as? String else {
+            result(FlutterError(code: "getCameraZoomRange", message: "trackId is required", details: nil))
+            return
+        }
+
+        #if os(iOS)
+        guard let capturer = getCapturer(for: trackId) else {
+            result(FlutterError(code: "getCameraZoomRange", message: "Could not find camera capturer for track", details: nil))
+            return
+        }
+
+        guard let device = capturer.captureDevice else {
+            result(FlutterError(code: "getCameraZoomRange", message: "No capture device available", details: nil))
+            return
+        }
+
+        result([
+            "minZoomFactor": device.minAvailableVideoZoomFactor,
+            "maxZoomFactor": device.maxAvailableVideoZoomFactor,
+            "currentZoomFactor": device.videoZoomFactor,
+        ])
+        #else
+        result(FlutterError(code: "getCameraZoomRange", message: "Camera zoom is not supported on macOS", details: nil))
+        #endif
+    }
+
+    #if os(iOS)
+    /// Retrieves the RTCCameraVideoCapturer for a given local video track ID.
+    private func getCapturer(for trackId: String) -> RTCCameraVideoCapturer? {
+        let webrtc = FlutterWebRTCPlugin.sharedSingleton()
+
+        guard let localVideoTrack = webrtc?.localTracks?[trackId] as? LocalVideoTrack else {
+            return nil
+        }
+
+        return localVideoTrack.capturer as? RTCCameraVideoCapturer
+    }
+    #endif
 }
 
 extension LiveKitPlugin {

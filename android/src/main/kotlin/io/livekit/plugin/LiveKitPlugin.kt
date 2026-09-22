@@ -471,6 +471,14 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
         result.success(null)
       }
 
+      "setCameraZoom" -> {
+        handleSetCameraZoom(call, result)
+      }
+
+      "getCameraZoomRange" -> {
+        handleGetCameraZoomRange(call, result)
+      }
+
       else -> {
         result.notImplemented()
       }
@@ -489,6 +497,119 @@ class LiveKitPlugin : FlutterPlugin, MethodCallHandler {
     // Cleanup all processors
     audioProcessors.values.forEach { it.cleanup() }
     audioProcessors.clear()
+  }
+
+  // MARK: - Camera Zoom
+
+  /**
+   * Sets the camera zoom level for a given video track.
+   *
+   * The zoom level is relative to the device's minimum zoom factor.
+   * A value of 1.0 means no zoom (minimum), and higher values zoom in.
+   */
+  private fun handleSetCameraZoom(call: MethodCall, result: Result) {
+    val trackId = call.argument<String>("trackId")
+    if (trackId == null) {
+      result.error("setCameraZoom", "trackId is required", null)
+      return
+    }
+
+    val zoomFactor = call.argument<Double>("zoomFactor")
+    if (zoomFactor == null) {
+      result.error("setCameraZoom", "zoomFactor is required", null)
+      return
+    }
+
+    val capturer = getCameraCapturer(trackId)
+    if (capturer == null) {
+      result.error("setCameraZoom", "Could not find camera capturer for track", null)
+      return
+    }
+
+    try {
+      val cameraManager = capturer.cameraManager
+      val cameraId = capturer.cameraId
+
+      if (cameraManager == null || cameraId == null) {
+        result.error("setCameraZoom", "Camera not available", null)
+        return
+      }
+
+      val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+      val maxZoom = characteristics.get(android.hardware.camera2.CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
+      val minZoom = 1.0
+
+      // Clamp zoom factor to valid range
+      val clampedZoom = zoomFactor.coerceIn(minZoom, maxZoom.toDouble())
+
+      // Set zoom using Camera2 API through the capturer
+      capturer.setZoom(clampedZoom.toFloat())
+
+      result.success(
+        mapOf(
+          "success" to true,
+          "appliedZoomFactor" to clampedZoom,
+          "minZoomFactor" to minZoom,
+          "maxZoomFactor" to maxZoom.toDouble(),
+        )
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to set camera zoom", e)
+      result.error("setCameraZoom", "Failed to set zoom: ${e.message}", null)
+    }
+  }
+
+  /**
+   * Gets the available zoom range for a given video track's camera.
+   */
+  private fun handleGetCameraZoomRange(call: MethodCall, result: Result) {
+    val trackId = call.argument<String>("trackId")
+    if (trackId == null) {
+      result.error("getCameraZoomRange", "trackId is required", null)
+      return
+    }
+
+    val capturer = getCameraCapturer(trackId)
+    if (capturer == null) {
+      result.error("getCameraZoomRange", "Could not find camera capturer for track", null)
+      return
+    }
+
+    try {
+      val cameraManager = capturer.cameraManager
+      val cameraId = capturer.cameraId
+
+      if (cameraManager == null || cameraId == null) {
+        result.error("getCameraZoomRange", "Camera not available", null)
+        return
+      }
+
+      val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+      val maxZoom = characteristics.get(android.hardware.camera2.CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
+      val minZoom = 1.0
+
+      // Get current zoom if available
+      val currentZoom = capturer.currentZoom ?: 1.0f
+
+      result.success(
+        mapOf(
+          "minZoomFactor" to minZoom,
+          "maxZoomFactor" to maxZoom.toDouble(),
+          "currentZoomFactor" to currentZoom.toDouble(),
+        )
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to get camera zoom range", e)
+      result.error("getCameraZoomRange", "Failed to get zoom range: ${e.message}", null)
+    }
+  }
+
+  /**
+   * Retrieves the Camera2Capturer for a given local video track ID.
+   */
+  private fun getCameraCapturer(trackId: String): com.cloudwebrtc.webrtc.video.LocalVideoTrack? {
+    val localTrack = flutterWebRTCPlugin.getLocalTrack(trackId)
+    return localTrack as? com.cloudwebrtc.webrtc.video.LocalVideoTrack
   }
 
   companion object {

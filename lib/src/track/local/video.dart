@@ -26,6 +26,7 @@ import '../../options.dart';
 import '../../proto/livekit_models.pb.dart' as lk_models;
 import '../../proto/livekit_rtc.pb.dart' as lk_rtc;
 import '../../stats/stats.dart';
+import '../../support/native.dart';
 import '../../support/platform.dart';
 import '../../types/other.dart';
 import '../../utils.dart' show isSVCCodec;
@@ -544,4 +545,164 @@ extension LocalVideoTrackExt on LocalVideoTrack {
       logger.warning('Failed to set degradation preference on sender $e');
     }
   }
+
+  // MARK: - Camera Zoom
+
+  /// Sets the camera zoom level for this video track.
+  ///
+  /// [zoomFactor] is the desired zoom level where 1.0 means no zoom (minimum)
+  /// and higher values zoom in. The actual zoom applied may be clamped to the
+  /// device's supported range.
+  ///
+  /// Returns a [CameraZoomResult] containing the applied zoom factor and
+  /// the supported zoom range.
+  ///
+  /// This method only works for camera tracks on iOS and Android.
+  /// On unsupported platforms, it returns a result with [success] = false.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await localVideoTrack.setZoom(2.0);
+  /// if (result.success) {
+  ///   print('Zoom applied: ${result.appliedZoomFactor}');
+  /// }
+  /// ```
+  Future<CameraZoomResult> setZoom(double zoomFactor) async {
+    final options = currentOptions;
+    if (options is! CameraCaptureOptions) {
+      logger.warning('setZoom: Not a camera track');
+      return CameraZoomResult(
+        success: false,
+        error: 'Not a camera track',
+      );
+    }
+
+    final trackId = mediaStreamTrack.id;
+    if (trackId == null) {
+      logger.warning('setZoom: Track ID is null');
+      return CameraZoomResult(
+        success: false,
+        error: 'Track ID is null',
+      );
+    }
+
+    try {
+      final response = await Native.setCameraZoom(trackId, zoomFactor);
+      return CameraZoomResult.fromMap(response);
+    } catch (e) {
+      logger.warning('setZoom did throw $e');
+      return CameraZoomResult(
+        success: false,
+        error: e.toString(),
+      );
+    }
+  }
+
+  /// Gets the available zoom range for this video track's camera.
+  ///
+  /// Returns a [CameraZoomRange] containing the minimum, maximum, and current
+  /// zoom factors supported by the camera.
+  ///
+  /// This method only works for camera tracks on iOS and Android.
+  /// On unsupported platforms, it returns null.
+  ///
+  /// Example:
+  /// ```dart
+  /// final range = await localVideoTrack.getZoomRange();
+  /// if (range != null) {
+  ///   print('Zoom range: ${range.minZoomFactor} - ${range.maxZoomFactor}');
+  ///   print('Current zoom: ${range.currentZoomFactor}');
+  /// }
+  /// ```
+  Future<CameraZoomRange?> getZoomRange() async {
+    final options = currentOptions;
+    if (options is! CameraCaptureOptions) {
+      logger.warning('getZoomRange: Not a camera track');
+      return null;
+    }
+
+    final trackId = mediaStreamTrack.id;
+    if (trackId == null) {
+      logger.warning('getZoomRange: Track ID is null');
+      return null;
+    }
+
+    try {
+      final response = await Native.getCameraZoomRange(trackId);
+      if (response.containsKey('error')) {
+        logger.warning('getZoomRange: ${response['error']}');
+        return null;
+      }
+      return CameraZoomRange.fromMap(response);
+    } catch (e) {
+      logger.warning('getZoomRange did throw $e');
+      return null;
+    }
+  }
+}
+
+/// Result of a camera zoom operation.
+class CameraZoomResult {
+  /// Whether the zoom operation was successful.
+  final bool success;
+
+  /// The actual zoom factor applied (may be clamped to device limits).
+  final double? appliedZoomFactor;
+
+  /// Minimum supported zoom factor (typically 1.0).
+  final double? minZoomFactor;
+
+  /// Maximum supported zoom factor.
+  final double? maxZoomFactor;
+
+  /// Error message if the operation failed.
+  final String? error;
+
+  CameraZoomResult({
+    required this.success,
+    this.appliedZoomFactor,
+    this.minZoomFactor,
+    this.maxZoomFactor,
+    this.error,
+  });
+
+  factory CameraZoomResult.fromMap(Map<String, dynamic> map) {
+    return CameraZoomResult(
+      success: map['success'] as bool? ?? false,
+      appliedZoomFactor: (map['appliedZoomFactor'] as num?)?.toDouble(),
+      minZoomFactor: (map['minZoomFactor'] as num?)?.toDouble(),
+      maxZoomFactor: (map['maxZoomFactor'] as num?)?.toDouble(),
+      error: map['error'] as String?,
+    );
+  }
+}
+
+/// Represents the available zoom range for a camera.
+class CameraZoomRange {
+  /// Minimum supported zoom factor (typically 1.0).
+  final double minZoomFactor;
+
+  /// Maximum supported zoom factor.
+  final double maxZoomFactor;
+
+  /// Current zoom factor.
+  final double currentZoomFactor;
+
+  CameraZoomRange({
+    required this.minZoomFactor,
+    required this.maxZoomFactor,
+    required this.currentZoomFactor,
+  });
+
+  factory CameraZoomRange.fromMap(Map<String, dynamic> map) {
+    return CameraZoomRange(
+      minZoomFactor: (map['minZoomFactor'] as num?)?.toDouble() ?? 1.0,
+      maxZoomFactor: (map['maxZoomFactor'] as num?)?.toDouble() ?? 1.0,
+      currentZoomFactor: (map['currentZoomFactor'] as num?)?.toDouble() ?? 1.0,
+    );
+  }
+
+  @override
+  String toString() =>
+      'CameraZoomRange(min: $minZoomFactor, max: $maxZoomFactor, current: $currentZoomFactor)';
 }
