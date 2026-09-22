@@ -557,7 +557,9 @@ extension LocalVideoTrackExt on LocalVideoTrack {
   /// Returns a [CameraZoomResult] containing the applied zoom factor and
   /// the supported zoom range.
   ///
-  /// This method only works for camera tracks on iOS and Android.
+  /// This method works for camera tracks on iOS (via native layer) and Android
+  /// (via flutter_webrtc). On iOS, detailed zoom range information is returned.
+  /// On Android, the zoom is applied but range information may be limited.
   /// On unsupported platforms, it returns a result with [success] = false.
   ///
   /// Example:
@@ -586,11 +588,36 @@ extension LocalVideoTrackExt on LocalVideoTrack {
       );
     }
 
+    // Try native implementation first (iOS)
     try {
       final response = await Native.setCameraZoom(trackId, zoomFactor);
+      if (response['success'] == true) {
+        return CameraZoomResult.fromMap(response);
+      }
+      // If native returns unsuccessful but no error, fall through to flutter_webrtc
+      if (response['error'] == null) {
+        return await _setZoomViaFlutterWebRTC(zoomFactor);
+      }
+      // Native returned an error, return it
       return CameraZoomResult.fromMap(response);
     } catch (e) {
-      logger.warning('setZoom did throw $e');
+      // Native implementation not available, fall back to flutter_webrtc
+      logger.fine('Native setZoom not available, falling back to flutter_webrtc: $e');
+      return await _setZoomViaFlutterWebRTC(zoomFactor);
+    }
+  }
+
+  /// Fallback zoom implementation using flutter_webrtc's Helper.setZoom().
+  Future<CameraZoomResult> _setZoomViaFlutterWebRTC(double zoomFactor) async {
+    try {
+      await rtc.Helper.setZoom(mediaStreamTrack, zoomFactor);
+      return CameraZoomResult(
+        success: true,
+        appliedZoomFactor: zoomFactor,
+        // flutter_webrtc doesn't return range info
+      );
+    } catch (e) {
+      logger.warning('setZoom via flutter_webrtc failed: $e');
       return CameraZoomResult(
         success: false,
         error: e.toString(),
