@@ -104,7 +104,9 @@ class CameraCaptureOptions extends VideoCaptureOptions {
       }
     }
     if (maxFrameRate != null) {
-      constraints['frameRate'] = {'max': maxFrameRate};
+      // Native getUserMedia reads `frameRate` as a plain number and drops
+      // `{max: n}`, which left the camera at its default rate.
+      constraints['frameRate'] = kIsWeb ? {'max': maxFrameRate} : maxFrameRate;
     }
     return constraints;
   }

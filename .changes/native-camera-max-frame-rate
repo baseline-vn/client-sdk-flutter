@@ -1,0 +1,1 @@
+patch type="fixed" "`CameraCaptureOptions.maxFrameRate` now takes effect on Android, iOS and desktop, where the camera previously kept its default 30 fps because the constraint was sent in a shape native capture ignores"
